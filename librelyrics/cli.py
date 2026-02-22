@@ -14,32 +14,26 @@ import os
 import re
 import sys
 from contextlib import ExitStack, redirect_stderr, redirect_stdout
-from typing import Annotated
+from typing import Annotated, Optional
 
 import questionary
 import typer
 from rich.status import Status
 
 from librelyrics import __version__
-from librelyrics.config import ConfigManager, get_config_path, get_default_config
+from librelyrics.config import (ConfigManager, get_config_path,
+                                get_default_config)
 from librelyrics.core import LibreLyrics, fetch_files_lyrics
 from librelyrics.exceptions import ConfigurationError, LyricsNotFound
 from librelyrics.logging_config import setup_logging
 from librelyrics.modules.base import ModuleCapability
-from librelyrics.plugin_manager import install_plugin, list_plugins, remove_plugin
+from librelyrics.plugin_manager import (install_plugin, list_plugins,
+                                        remove_plugin)
 from librelyrics.registry import get_plugin_for_url, load_all_plugins
-from librelyrics.ui import (
-    console,
-    print_config_table,
-    print_download_summary,
-    print_error,
-    print_info,
-    print_logo,
-    print_plugins_table,
-    print_success,
-    print_warning,
-    prompt_url,
-)
+from librelyrics.ui import (console, print_config_table,
+                            print_download_summary, print_error, print_info,
+                            print_logo, print_plugins_table, print_success,
+                            print_warning, prompt_url)
 
 app = typer.Typer(
     name="librelyrics",
@@ -82,7 +76,7 @@ def callback(
         typer.Option("--verbose", "-v", help="Enable verbose debug output."),
     ] = False,
     version: Annotated[
-        bool | None,
+        Optional[bool],
         typer.Option(
             "--version", "-V",
             help="Show version and exit.",
@@ -91,7 +85,7 @@ def callback(
         ),
     ] = None,
     directory: Annotated[
-        str | None,
+        Optional[str],
         typer.Option("--directory", "-d", metavar="PATH", help="Output directory for lyrics files."),
     ] = None,
     force: Annotated[
@@ -113,7 +107,7 @@ def callback(
 def fetch_command(
     ctx: typer.Context,
     url: Annotated[
-        str | None,
+        Optional[str],
         typer.Argument(help="URL or local path to fetch lyrics for."),
     ] = None,
 ) -> None:
