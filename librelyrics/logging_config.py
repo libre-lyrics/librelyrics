@@ -1,4 +1,6 @@
 """Centralized logging configuration for librelyrics."""
+from __future__ import annotations
+
 import logging
 import sys
 

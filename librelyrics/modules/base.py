@@ -12,7 +12,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum, Flag, auto
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Optional
 
 from librelyrics.exceptions import RateLimitError
 from librelyrics.models import LyricsResponse
@@ -85,7 +85,7 @@ class ModuleMeta:
 # ---------------------------------------------------------------------------
 # Lifecycle hooks type
 # ---------------------------------------------------------------------------
-FetchHook = Callable[["LyricsModule", "LyricsResponse | None", Exception | None], None]
+FetchHook = Callable[["LyricsModule", Optional["LyricsResponse"], Optional[Exception]], None]
 
 
 class LyricsModule(ABC):
