@@ -30,7 +30,7 @@ from librelyrics.modules.base import ModuleCapability
 from librelyrics.plugin_manager import (install_plugin, list_plugins,
                                         remove_plugin)
 from librelyrics.registry import get_plugin_for_url, load_all_plugins
-from librelyrics.ui import (console, print_config_table,
+from librelyrics.ui import (console, create_progress, print_config_table,
                             print_download_summary, print_error, print_info,
                             print_logo, print_plugins_table, print_success,
                             print_warning, prompt_url)
@@ -497,15 +497,17 @@ def handle_fetch(
                 folder_name = folder_template.replace('{name}', album_info.get('name', 'Album'))
                 folder_name = folder_name.replace('{artists}', artists)
 
-            # Fetch and save with status spinner
+            # Fetch and save with progress bar
+            total_tracks = album_info.get('total_tracks') if album_info else None
             successful, failed, skipped = fetch_and_save_batch(
                 plugin,
                 'album',
                 librelyrics.config,
                 folder_name,
                 verbose,
+                total_tracks=total_tracks,
             )
-            _print_batch_summary(successful, failed, skipped, album_info.get('total_tracks') if album_info else None, verbose)
+            _print_batch_summary(successful, failed, skipped, total_tracks, verbose)
 
         elif is_batch and plugin.has_capability(ModuleCapability.PLAYLIST) and 'playlist' in url.lower():
             # Fetch playlist - get info first with spinner
@@ -532,15 +534,16 @@ def handle_fetch(
                 folder_name = folder_template.replace('{name}', playlist_info.get('name', 'Playlist'))
                 folder_name = folder_name.replace('{owner}', owner)
 
-            # Fetch and save with status spinner
+            # Fetch and save with progress bar
+            total_tracks = playlist_info.get('tracks', {}).get('total') if playlist_info else None
             successful, failed, skipped = fetch_and_save_batch(
                 plugin,
                 'playlist',
                 librelyrics.config,
                 folder_name,
                 verbose,
+                total_tracks=total_tracks,
             )
-            total_tracks = playlist_info.get('tracks', {}).get('total') if playlist_info else None
             _print_batch_summary(successful, failed, skipped, total_tracks, verbose)
 
         else:
@@ -572,14 +575,24 @@ def handle_fetch(
         return 1
 
 
+def _format_task_desc(action: str, title: str = "", max_title_len: int = 25) -> str:
+    """Format action and track title into a clean description for fixed-width progress bars."""
+    if not title:
+        return f"[cyan]{action}[/cyan]"
+    if len(title) > max_title_len:
+        title = title[: max_title_len - 3] + "..."
+    return f"[cyan]{action}: {title}[/cyan]"
+
+
 def fetch_and_save_batch(
     plugin,
     batch_type: str,  # 'album' or 'playlist'
     config: dict,
     folder_name: str | None = None,
     verbose: bool = False,
+    total_tracks: int | str | None = None,
 ) -> tuple[list[str], list[str], list[str]]:
-    """Fetch lyrics and save with a status spinner.
+    """Fetch lyrics and save with a progress bar.
 
     Args:
         plugin: The plugin instance.
@@ -587,13 +600,43 @@ def fetch_and_save_batch(
         config: Configuration dictionary.
         folder_name: Optional folder name for output.
         verbose: Enable verbose output.
+        total_tracks: Total tracks count if known.
 
     Returns:
-        Tuple of (successful_tracks, failed_tracks).
+        Tuple of (successful_tracks, failed_tracks, skipped_tracks).
     """
-    # Fetch all lyrics using the plugin's batch method
+    total_count: int | None = None
+    if total_tracks is not None:
+        try:
+            total_count = int(total_tracks)
+        except (TypeError, ValueError):
+            total_count = None
+
     responses = []
-    with Status(f"[cyan]🎵 Fetching {batch_type} lyrics...[/cyan]", console=console, spinner="dots"):
+    fetched_count = 0
+
+    with create_progress() as progress:
+        task = progress.add_task(
+            _format_task_desc(f"Fetching {batch_type} lyrics"),
+            total=total_count,
+        )
+
+        orig_fetch_track = getattr(plugin, '_fetch_track_lyrics', None)
+
+        def _on_track_fetched(response=None):
+            nonlocal fetched_count
+            fetched_count += 1
+            title = response.title if response and hasattr(response, 'title') else ''
+            desc = _format_task_desc("Downloading", title)
+            progress.update(task, completed=fetched_count, description=desc)
+
+        if orig_fetch_track:
+            def wrapped_fetch_track(*args, **kwargs):
+                res = orig_fetch_track(*args, **kwargs)
+                _on_track_fetched(res)
+                return res
+            setattr(plugin, '_fetch_track_lyrics', wrapped_fetch_track)
+
         try:
             with ExitStack() as stack:
                 if not verbose:
@@ -610,22 +653,31 @@ def fetch_and_save_batch(
             if verbose:
                 console.print(f"[dim]Batch fetch error: {e}[/dim]")
             raise
+        finally:
+            if orig_fetch_track:
+                setattr(plugin, '_fetch_track_lyrics', orig_fetch_track)
 
-    # Setup output directory
-    download_path = config.get('download_path', 'downloads')
-    if folder_name and config.get('create_folder', True):
-        folder_name = re.sub(r'[\\/*?:"<>|]', '', folder_name)
-        download_path = os.path.join(download_path, folder_name)
-    os.makedirs(download_path, exist_ok=True)
+        # Update total if total_count was unknown or mismatched
+        total_items = len(responses) if responses else (total_count or 0)
+        progress.update(task, total=max(total_items, fetched_count), completed=max(fetched_count, total_items))
 
-    successful = []
-    failed = []
-    skipped = []
+        # Setup output directory
+        download_path = config.get('download_path', 'downloads')
+        if folder_name and config.get('create_folder', True):
+            folder_name = re.sub(r'[\\/*?:"<>|]', '', folder_name)
+            download_path = os.path.join(download_path, folder_name)
+        os.makedirs(download_path, exist_ok=True)
 
-    with Status("[cyan]📝 Saving lyrics...[/cyan]", console=console, spinner="dots") as status:
+        successful = []
+        failed = []
+        skipped = []
+
+        save_task = progress.add_task(_format_task_desc("Saving lyrics"), total=len(responses))
         for response in responses:
             try:
-                status.update(f"[cyan]📝 Saving: {response.title}[/cyan]")
+                desc = _format_task_desc("Saving", response.title)
+                progress.update(save_task, description=desc)
+
                 # Build filename
                 file_data = {
                     'name': response.title,
@@ -646,6 +698,7 @@ def fetch_and_save_batch(
                 # Check if exists
                 if os.path.exists(file_path) and not config.get('force_download'):
                     skipped.append(response.title)
+                    progress.update(save_task, advance=1)
                     continue
 
                 # Write file with optional enhanced LRC format
@@ -654,16 +707,16 @@ def fetch_and_save_batch(
                     f.write(response.to_lrc(enhanced=enhanced))
 
                 successful.append(response.title)
+                progress.update(save_task, advance=1)
 
             except Exception as e:
                 failed.append(response.title if hasattr(response, 'title') else str(response))
+                progress.update(save_task, advance=1)
                 if verbose:
                     console.print(f"[dim]Error saving: {e}[/dim]")
 
     if successful:
         console.print(f"[green]✓[/green] Saved {len(successful)} lyrics to: [cyan]{download_path}[/cyan]")
-    if skipped:
-        console.print(f"[dim]⊘ Skipped {len(skipped)} existing files[/dim]")
 
     return successful, failed, skipped
 
@@ -704,7 +757,7 @@ def save_responses_interactive(
     config: dict,
     folder_name: str | None = None,
 ) -> tuple[list[str], list[str]]:
-    """Save lyrics responses to files with a status spinner.
+    """Save lyrics responses to files with a progress bar.
 
     Args:
         responses: List of LyricsResponse objects.
@@ -728,10 +781,13 @@ def save_responses_interactive(
     if not responses:
         return successful, failed
 
-    with Status("[cyan]📝 Saving lyrics...[/cyan]", console=console, spinner="dots") as status:
+    with create_progress() as progress:
+        task = progress.add_task(_format_task_desc("Saving lyrics"), total=len(responses))
         for response in responses:
             try:
-                status.update(f"[cyan]📝 Saving: {response.title}[/cyan]")
+                desc = _format_task_desc("Saving", response.title)
+                progress.update(task, description=desc)
+
                 # Build filename
                 file_data = {
                     'name': response.title,
@@ -752,6 +808,7 @@ def save_responses_interactive(
                 # Check if exists
                 if os.path.exists(file_path) and not config.get('force_download'):
                     skipped.append(response.title)
+                    progress.update(task, advance=1)
                     continue
 
                 # Write file with optional enhanced LRC format
@@ -760,9 +817,11 @@ def save_responses_interactive(
                     f.write(response.to_lrc(enhanced=enhanced))
 
                 successful.append(response.title)
+                progress.update(task, advance=1)
 
             except Exception:
                 failed.append(response.title)
+                progress.update(task, advance=1)
 
     # Print summary
     console.print()

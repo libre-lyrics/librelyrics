@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "librelyrics"
-version = "1.0.0"
+version = "1.0.1"
 description = "A modular, plugin-based lyrics fetcher. Fetch synced and unsynced lyrics from various sources via plugins."
 readme = "README.md"
 license = {text = "GPL-3.0-or-later"}

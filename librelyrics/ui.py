@@ -4,6 +4,8 @@ Provides styled console output, progress bars, and formatted displays.
 """
 from __future__ import annotations
 
+import os
+import sys
 import questionary
 from rich.console import Console
 from rich.panel import Panel
@@ -20,6 +22,10 @@ from rich.theme import Theme
 
 from librelyrics.models import LyricsResponse
 
+if sys.platform == "win32":
+    for stream in filter(None, (sys.stdout, sys.stderr, getattr(sys, '__stdout__', None), getattr(sys, '__stderr__', None))):
+        stream.reconfigure(encoding="utf-8", errors="replace")
+
 LIBRELYRICS_THEME = Theme({
     "info": "cyan",
     "success": "green",
@@ -29,7 +35,7 @@ LIBRELYRICS_THEME = Theme({
     "muted": "dim",
 })
 
-console = Console(theme=LIBRELYRICS_THEME)
+console = Console(file=sys.__stdout__, theme=LIBRELYRICS_THEME)
 
 LOGO = """[bold magenta]
   _     _ _              _               _
@@ -76,7 +82,7 @@ def create_progress() -> Progress:
     """Create a progress bar for batch operations."""
     return Progress(
         SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
+        TextColumn("[progress.description]{task.description:<42}"),
         BarColumn(),
         TaskProgressColumn(),
         TimeRemainingColumn(),
