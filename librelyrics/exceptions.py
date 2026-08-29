@@ -39,6 +39,21 @@ class NoMatchingModuleError(PluginError):
     pass
 
 
+class DirectModeError(PluginError):
+    """--direct was used without a matching URL plugin."""
+    pass
+
+
+class UnknownPluginError(PluginError):
+    """A plugin id was required but is not loaded."""
+    pass
+
+
+class MissingMetadataError(PluginError):
+    """Artist and title are required for a metadata search."""
+    pass
+
+
 # === Config Errors ===
 
 class ConfigurationError(LibreLyricsError):
