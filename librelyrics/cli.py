@@ -14,26 +14,41 @@ import os
 import re
 import sys
 from contextlib import ExitStack, redirect_stderr, redirect_stdout
-from typing import Annotated, Optional
+from typing import Annotated
 
 import questionary
 import typer
 from rich.status import Status
 
 from librelyrics import __version__
-from librelyrics.config import (ConfigManager, get_config_path,
-                                get_default_config)
+from librelyrics.config import ConfigManager, get_config_path, get_default_config
 from librelyrics.core import LibreLyrics, fetch_files_lyrics
-from librelyrics.exceptions import ConfigurationError, LyricsNotFound
+from librelyrics.exceptions import (
+    ConfigurationError,
+    DirectModeError,
+    LyricsNotFound,
+    MissingMetadataError,
+    NoMatchingModuleError,
+    UnknownPluginError,
+)
 from librelyrics.logging_config import setup_logging
+from librelyrics.models import TrackQuery
 from librelyrics.modules.base import ModuleCapability
-from librelyrics.plugin_manager import (install_plugin, list_plugins,
-                                        remove_plugin)
+from librelyrics.plugin_manager import install_plugin, list_plugins, remove_plugin
 from librelyrics.registry import get_plugin_for_url, load_all_plugins
-from librelyrics.ui import (console, create_progress, print_config_table,
-                            print_download_summary, print_error, print_info,
-                            print_logo, print_plugins_table, print_success,
-                            print_warning, prompt_url)
+from librelyrics.ui import (
+    console,
+    create_progress,
+    print_config_table,
+    print_download_summary,
+    print_error,
+    print_info,
+    print_logo,
+    print_plugins_table,
+    print_success,
+    print_warning,
+    prompt_url,
+)
 
 app = typer.Typer(
     name="librelyrics",
@@ -76,7 +91,7 @@ def callback(
         typer.Option("--verbose", "-v", help="Enable verbose debug output."),
     ] = False,
     version: Annotated[
-        Optional[bool],
+        bool | None,
         typer.Option(
             "--version", "-V",
             help="Show version and exit.",
@@ -85,7 +100,7 @@ def callback(
         ),
     ] = None,
     directory: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--directory", "-d", metavar="PATH", help="Output directory for lyrics files."),
     ] = None,
     force: Annotated[
@@ -107,8 +122,28 @@ def callback(
 def fetch_command(
     ctx: typer.Context,
     url: Annotated[
-        Optional[str],
+        str | None,
         typer.Argument(help="URL or local path to fetch lyrics for."),
+    ] = None,
+    artist: Annotated[
+        str | None,
+        typer.Option("--artist", help="Track artist for a metadata search."),
+    ] = None,
+    title: Annotated[
+        str | None,
+        typer.Option("--title", help="Track title for a metadata search."),
+    ] = None,
+    album: Annotated[
+        str | None,
+        typer.Option("--album", help="Album name (optional metadata)."),
+    ] = None,
+    direct: Annotated[
+        bool,
+        typer.Option("--direct", "-D", help="Fetch only from the plugin that matches the URL."),
+    ] = False,
+    from_plugin: Annotated[
+        str | None,
+        typer.Option("--from", help="Force lyrics from this plugin id after resolve."),
     ] = None,
 ) -> None:
     """Fetch lyrics for a URL or local path."""
@@ -118,7 +153,7 @@ def fetch_command(
     force = obj.get("force", False)
 
     url_was_prompted = False
-    if not url:
+    if not url and not (artist and title):
         url = prompt_url(show_logo=True)
         url_was_prompted = True
         if not url:
@@ -128,6 +163,8 @@ def fetch_command(
     code = handle_fetch(
         url, verbose=verbose, directory=directory,
         force=force, show_logo=not url_was_prompted,
+        artist=artist, title=title, album=album,
+        direct=direct, from_plugin=from_plugin,
     )
     raise typer.Exit(code=code)
 
@@ -221,7 +258,7 @@ def edit_config_interactive() -> int:
     # Discover plugins and merge defaults once
     plugins = load_all_plugins(config)
     for plugin_cls in plugins:
-        plugin_name = plugin_cls.META.name.lower()
+        plugin_name = plugin_cls.META.id
         defaults = plugin_cls.default_config()
         if plugin_name not in config['plugins']:
             config['plugins'][plugin_name] = defaults
@@ -232,9 +269,10 @@ def edit_config_interactive() -> int:
     # ── Build the section menu ──────────────────────────────────
     GENERAL   = "General Settings"
     FILE_NAME = "File Naming"
+    SEARCH    = "Search and lyrics quality"
     SAVE_EXIT = "Save & Exit"
 
-    section_choices: list[str] = [GENERAL, FILE_NAME]
+    section_choices: list[str] = [GENERAL, FILE_NAME, SEARCH]
 
     plugin_map: dict[str, type] = {}
     for plugin_cls in plugins:
@@ -262,6 +300,8 @@ def edit_config_interactive() -> int:
             _edit_general_settings(config)
         elif section == FILE_NAME:
             _edit_file_naming(config)
+        elif section == SEARCH:
+            _edit_search_settings(config, plugins)
         elif section in plugin_map:
             _edit_plugin_config(config, plugin_map[section])
 
@@ -277,7 +317,7 @@ def edit_config_interactive() -> int:
 def _edit_plugin_config(config: dict, plugin_cls: type) -> None:
     """Prompt for a single plugin's config fields."""
     meta = plugin_cls.META
-    plugin_name = meta.name.lower()
+    plugin_name = meta.id
     schema = meta.config_schema
 
     console.print(f"\n[bold green]{meta.name} Plugin[/bold green]")
@@ -299,6 +339,42 @@ def _edit_plugin_config(config: dict, plugin_cls: type) -> None:
 
         if answer is not None:
             config['plugins'][plugin_name][key] = answer
+
+
+def _edit_search_settings(config: dict, plugins: list) -> None:
+    """Prompt for search priority and preferred lyrics order."""
+    console.print("\n[bold]Search and lyrics quality[/bold]")
+    console.print("[dim]Order tokens: RICH, SYNCED, UNSYNCED[/dim]")
+    ids = [p.META.id for p in plugins]
+    if ids:
+        console.print(f"[dim]Installed plugin ids: {', '.join(ids)}[/dim]")
+
+    current_order = config.get('preferred_lyrics_order', ['RICH', 'SYNCED', 'UNSYNCED'])
+    order_text = questionary.text(
+        "Preferred lyrics order (comma-separated):",
+        default=', '.join(current_order),
+    ).ask()
+    if order_text is not None:
+        config['preferred_lyrics_order'] = [
+            part.strip().upper() for part in order_text.split(',') if part.strip()
+        ]
+
+    current_priority = config.get('search_priority', [])
+    priority_text = questionary.text(
+        "Search priority plugin ids (comma-separated, empty = URL plugin only):",
+        default=', '.join(current_priority),
+    ).ask()
+    if priority_text is not None:
+        config['search_priority'] = [
+            part.strip() for part in priority_text.split(',') if part.strip()
+        ]
+
+    attempts = questionary.text(
+        "Max search attempts per track:",
+        default=str(config.get('max_search_attempts', 5)),
+    ).ask()
+    if attempts and attempts.isdigit():
+        config['max_search_attempts'] = int(attempts)
 
 
 def _edit_general_settings(config: dict) -> None:
@@ -393,26 +469,32 @@ def plugin_remove(
 
 # ── Fetch logic ─────────────────────────────────────────────────
 def handle_fetch(
-    url: str,
+    url: str | None,
     *,
     verbose: bool = False,
     directory: str | None = None,
     force: bool = False,
     show_logo: bool = True,
+    artist: str | None = None,
+    title: str | None = None,
+    album: str | None = None,
+    direct: bool = False,
+    from_plugin: str | None = None,
 ) -> int:
-    """Handle fetching lyrics for a URL - with lazy loading.
-
-    Args:
-        url: The URL or path to fetch lyrics for.
-        verbose: Enable verbose output.
-        directory: Override output directory.
-        force: Overwrite existing files.
-        show_logo: Whether to print the logo.
-    """
+    """Handle fetching lyrics for a URL or metadata query."""
     if show_logo:
         print_logo()
 
-    # Initialize librelyrics (lazy load plugins)
+    if direct and from_plugin:
+        print_error("--direct and --from cannot be used together")
+        return 1
+    if (artist and not title) or (title and not artist):
+        print_error("--artist and --title must be used together")
+        return 1
+    if direct and not url:
+        print_error("--direct requires a URL")
+        return 1
+
     try:
         librelyrics = LibreLyrics(verbose=verbose)
     except ConfigurationError as e:
@@ -423,148 +505,91 @@ def handle_fetch(
         print_error(f"Failed to initialize: {e}")
         return 1
 
-    # Apply CLI overrides
     if directory:
         librelyrics.config['download_path'] = directory
     if force:
         librelyrics.config['force_download'] = True
 
-    # Check if it's a local path
-    if os.path.isdir(url):
+    if url and os.path.isdir(url):
         return handle_local_files(librelyrics, url, verbose=verbose)
 
-    # It's a URL - find matching plugin
-    plugin_cls = get_plugin_for_url(librelyrics.plugins, url)
-    if not plugin_cls:
-        print_error("No plugin found that supports this URL")
-        console.print(f"[dim]URL: {url}[/dim]")
-        console.print("\n[dim]Installed plugins:[/dim]")
-        for p in librelyrics.plugins:
-            console.print(f"  • {p.META.name}: {p.META.regex.pattern}")
-        return 1
+    query = TrackQuery(url=url, artist=artist, title=title, album=album)
+    is_batch = bool(
+        url and ('album' in url.lower() or 'playlist' in url.lower())
+    )
 
-    console.print(f"[dim]Using plugin:[/dim] [cyan]{plugin_cls.META.name}[/cyan]\n")
-
-    # Get plugin config
-    plugin_config = librelyrics.config_manager.for_plugin(plugin_cls)
-
-    # Check if plugin requires auth
-    if plugin_cls.META.requires_auth:
-        try:
-            plugin_cls.validate_config(plugin_config)
-        except ConfigurationError as e:
-            print_error(str(e))
-            console.print(f"[dim]Run 'librelyrics config edit' to configure {plugin_cls.META.name}[/dim]")
-            return 1
-
-    # Instantiate plugin with authentication spinner
-    try:
-        with Status(f"[cyan]🔐 Authenticating with {plugin_cls.META.name}...[/cyan]", console=console, spinner="dots"):
-            plugin = plugin_cls(url, plugin_config)
-        print_success(f"Authenticated with {plugin_cls.META.name}")
-    except Exception as e:
-        print_error(f"Failed to initialize {plugin_cls.META.name}: {e}")
-        return 1
-
-    # Determine if batch or single fetch
-    is_batch = 'album' in url.lower() or 'playlist' in url.lower()
+    folder_name = None
+    total_tracks = None
+    plugin_cls = get_plugin_for_url(librelyrics.plugins, query) if url else None
+    if plugin_cls:
+        console.print(
+            f"[dim]URL plugin:[/dim] [cyan]{plugin_cls.META.name}[/cyan] "
+            f"[dim]({plugin_cls.META.id})[/dim]\n"
+        )
+        plugin_config = librelyrics.config_manager.for_plugin(plugin_cls)
+        if plugin_cls.META.requires_auth:
+            try:
+                plugin_cls.validate_config(plugin_config)
+            except ConfigurationError as e:
+                print_error(str(e))
+                console.print(
+                    f"[dim]Run 'librelyrics config edit' to configure {plugin_cls.META.name}[/dim]"
+                )
+                return 1
+        if is_batch:
+            plugin = plugin_cls(query, plugin_config)
+            folder_name, total_tracks = _batch_folder_and_count(plugin, url or "", librelyrics.config, verbose)
 
     successful: list[str] = []
     failed: list[str] = []
 
     try:
-        if is_batch and plugin.has_capability(ModuleCapability.ALBUM) and 'album' in url.lower():
-            # Fetch album - get info first with spinner
-            album_info = None
-            with Status("[cyan] Fetching album info...[/cyan]", console=console, spinner="dots"):
-                if hasattr(plugin, 'get_album_info'):
-                    try:
-                        album_info = plugin.get_album_info()
-                    except Exception as e:
-                        if verbose:
-                            console.print(f"[dim]Could not get album info: {e}[/dim]")
-
-            # Display album info
-            folder_name = None
-            if album_info:
-                console.print(f"\n[bold]📀 Album:[/bold] {album_info.get('name', 'Unknown')}")
-                artists = ', '.join(a['name'] for a in album_info.get('artists', []))
-                console.print(f"   [dim]Artist:[/dim] {artists}")
-                console.print(f"   [dim]Tracks:[/dim] {album_info.get('total_tracks', '?')}\n")
-
-                # Generate folder name from template
-                folder_template = librelyrics.config.get('album_folder_name', '{name} - {artists}')
-                folder_name = folder_template.replace('{name}', album_info.get('name', 'Album'))
-                folder_name = folder_name.replace('{artists}', artists)
-
-            # Fetch and save with progress bar
-            total_tracks = album_info.get('total_tracks') if album_info else None
-            successful, failed, skipped = fetch_and_save_batch(
-                plugin,
-                'album',
-                librelyrics.config,
-                folder_name,
-                verbose,
-                total_tracks=total_tracks,
+        if is_batch and url:
+            with Status("[cyan] Fetching lyrics...[/cyan]", console=console, spinner="dots"):
+                responses = librelyrics.fetch_batch(
+                    url, direct=direct, from_plugin=from_plugin,
+                )
+            successful, failed = save_responses_interactive(
+                responses, librelyrics.config, folder_name,
             )
+            skipped: list[str] = []
             _print_batch_summary(successful, failed, skipped, total_tracks, verbose)
-
-        elif is_batch and plugin.has_capability(ModuleCapability.PLAYLIST) and 'playlist' in url.lower():
-            # Fetch playlist - get info first with spinner
-            playlist_info = None
-            with Status("[cyan] Fetching playlist info...[/cyan]", console=console, spinner="dots"):
-                if hasattr(plugin, 'get_playlist_info'):
-                    try:
-                        playlist_info = plugin.get_playlist_info()
-                    except Exception as e:
-                        if verbose:
-                            console.print(f"[dim]Could not get playlist info: {e}[/dim]")
-
-            # Display playlist info
-            folder_name = None
-            if playlist_info:
-                console.print(f"\n[bold]📝 Playlist:[/bold] {playlist_info.get('name', 'Unknown')}")
-                owner = playlist_info.get('owner', {}).get('display_name', 'Unknown')
-                console.print(f"   [dim]Owner:[/dim] {owner}")
-                track_count = playlist_info.get('tracks', {}).get('total', '?')
-                console.print(f"   [dim]Tracks:[/dim] {track_count}\n")
-
-                # Generate folder name from template
-                folder_template = librelyrics.config.get('play_folder_name', '{name} - {owner}')
-                folder_name = folder_template.replace('{name}', playlist_info.get('name', 'Playlist'))
-                folder_name = folder_name.replace('{owner}', owner)
-
-            # Fetch and save with progress bar
-            total_tracks = playlist_info.get('tracks', {}).get('total') if playlist_info else None
-            successful, failed, skipped = fetch_and_save_batch(
-                plugin,
-                'playlist',
-                librelyrics.config,
-                folder_name,
-                verbose,
-                total_tracks=total_tracks,
-            )
-            _print_batch_summary(successful, failed, skipped, total_tracks, verbose)
-
         else:
-            # Single track - use spinner
             with Status("[cyan] Fetching track info...[/cyan]", console=console, spinner="dots"):
-                response = plugin.fetch()
-
-            # Show track info
+                response = librelyrics.fetch_query(
+                    query, direct=direct, from_plugin=from_plugin,
+                )
             console.print(f"\n[bold]🎵 Track:[/bold] {response.title}")
             console.print(f"   [dim]Artist:[/dim] {response.artist}")
             if response.album:
                 console.print(f"   [dim]Album:[/dim] {response.album}")
-            console.print(f"   [dim]Synced:[/dim] {'✓ Yes' if response.synced else '✗ No'}")
+            console.print(f"   [dim]Source:[/dim] {response.source}")
+            quality = "Rich" if response.rich_synced else ("Synced" if response.synced else "Unsynced")
+            console.print(f"   [dim]Quality:[/dim] {quality}")
             console.print()
-
             successful, failed = save_responses_interactive([response], librelyrics.config)
-
-        if not is_batch:
             print_download_summary(successful, failed)
+
         return 0 if successful else 1
 
+    except DirectModeError as e:
+        print_error(str(e))
+        return 1
+    except UnknownPluginError as e:
+        print_error(str(e))
+        return 1
+    except MissingMetadataError as e:
+        print_error(str(e))
+        return 1
+    except NoMatchingModuleError as e:
+        print_error(str(e))
+        if url:
+            console.print(f"[dim]URL: {url}[/dim]")
+        console.print("\n[dim]Installed plugins:[/dim]")
+        for p in librelyrics.plugins:
+            pattern = p.META.regex.pattern if p.META.regex else "(search)"
+            console.print(f"  • {p.META.id} ({p.META.name}): {pattern}")
+        return 1
     except LyricsNotFound as e:
         print_warning(str(e))
         return 1
@@ -573,6 +598,42 @@ def handle_fetch(
         if verbose:
             console.print_exception()
         return 1
+
+
+def _batch_folder_and_count(plugin, url: str, config: dict, verbose: bool) -> tuple[str | None, int | None]:
+    """Optional album/playlist folder name from plugin info helpers."""
+    folder_name = None
+    total_tracks = None
+    try:
+        if 'album' in url.lower() and hasattr(plugin, 'get_album_info'):
+            info = plugin.get_album_info()
+            artists = ', '.join(a['name'] for a in info.get('artists', []))
+            console.print(f"\n[bold]📀 Album:[/bold] {info.get('name', 'Unknown')}")
+            console.print(f"   [dim]Artist:[/dim] {artists}")
+            console.print(f"   [dim]Tracks:[/dim] {info.get('total_tracks', '?')}\n")
+            template = config.get('album_folder_name', '{name} - {artists}')
+            folder_name = template.replace('{name}', info.get('name', 'Album')).replace('{artists}', artists)
+            try:
+                total_tracks = int(info.get('total_tracks'))
+            except (TypeError, ValueError):
+                total_tracks = None
+        elif 'playlist' in url.lower() and hasattr(plugin, 'get_playlist_info'):
+            info = plugin.get_playlist_info()
+            owner = info.get('owner', {}).get('display_name', 'Unknown')
+            console.print(f"\n[bold]📝 Playlist:[/bold] {info.get('name', 'Unknown')}")
+            console.print(f"   [dim]Owner:[/dim] {owner}")
+            track_count = info.get('tracks', {}).get('total', '?')
+            console.print(f"   [dim]Tracks:[/dim] {track_count}\n")
+            template = config.get('play_folder_name', '{name} - {owner}')
+            folder_name = template.replace('{name}', info.get('name', 'Playlist')).replace('{owner}', owner)
+            try:
+                total_tracks = int(track_count)
+            except (TypeError, ValueError):
+                total_tracks = None
+    except Exception as e:
+        if verbose:
+            console.print(f"[dim]Could not get album/playlist info: {e}[/dim]")
+    return folder_name, total_tracks
 
 
 def _format_task_desc(action: str, title: str = "", max_title_len: int = 25) -> str:
@@ -635,7 +696,7 @@ def fetch_and_save_batch(
                 res = orig_fetch_track(*args, **kwargs)
                 _on_track_fetched(res)
                 return res
-            setattr(plugin, '_fetch_track_lyrics', wrapped_fetch_track)
+            plugin._fetch_track_lyrics = wrapped_fetch_track
 
         try:
             with ExitStack() as stack:
@@ -655,7 +716,7 @@ def fetch_and_save_batch(
             raise
         finally:
             if orig_fetch_track:
-                setattr(plugin, '_fetch_track_lyrics', orig_fetch_track)
+                plugin._fetch_track_lyrics = orig_fetch_track
 
         # Update total if total_count was unknown or mismatched
         total_items = len(responses) if responses else (total_count or 0)
@@ -869,12 +930,15 @@ def main() -> None:
     # Find the first arg that isn't an option (--verbose, -d PATH, etc.)
     first_positional = None
     skip_next = False
+    value_flags = {
+        "-d", "--directory", "--artist", "--title", "--album", "--from",
+    }
     for arg in args:
         if skip_next:
             skip_next = False
             continue
-        if arg in ("-d", "--directory"):
-            skip_next = True  # next arg is the PATH value
+        if arg in value_flags:
+            skip_next = True
             continue
         if arg.startswith("-"):
             continue

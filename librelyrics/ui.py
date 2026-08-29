@@ -4,8 +4,8 @@ Provides styled console output, progress bars, and formatted displays.
 """
 from __future__ import annotations
 
-import os
 import sys
+
 import questionary
 from rich.console import Console
 from rich.panel import Panel
@@ -106,6 +106,7 @@ def print_plugins_table(plugins: list[dict]) -> None:
         header_style="bold cyan",
     )
     table.add_column("#", justify="right", style="bold")
+    table.add_column("Id", style="cyan")
     table.add_column("Name", style="green")
     table.add_column("Auth", justify="center")
     table.add_column("Lyrics Types")
@@ -130,6 +131,7 @@ def print_plugins_table(plugins: list[dict]) -> None:
 
         table.add_row(
             pos_str,
+            plugin.get('id', ''),
             plugin['name'],
             auth_badge,
             lyrics_str,
