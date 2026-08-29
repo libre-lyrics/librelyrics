@@ -14,7 +14,8 @@ A modular, plugin-based lyrics fetcher. Fetch synced and unsynced lyrics from va
 
 - **Synced lyrics** — Line-by-line timestamps (LRC format)
 - **Rich synced lyrics** — Word-by-word karaoke-style timing (Enhanced LRC)
-- **Plugin architecture** — Extensible with external plugins via entry points
+- **Plugin architecture** — External plugins via entry points or a plugin directory
+- **Metadata search** — Fetch by artist and title, with a user-defined source list
 - **Batch downloads** — Fetch lyrics for entire albums or playlists
 - **CLI & Library** — Use from the command line or import as a Python library
 - **Interactive config** — Menu-driven configuration editor
@@ -27,7 +28,9 @@ pip install librelyrics
 
 ## Plugins
 
-LibreLyrics is a plugin-based system. The core package **does not include any lyrics sources** by default. You need to install plugin packages separately to fetch lyrics from different services.
+LibreLyrics is a plugin-based system. The core package **does not include any lyrics sources**. Install plugin packages, or put plugin modules in the plugin directory (`~/.config/librelyrics/plugins` on Linux).
+
+Plugins must declare **API version 2** (`LIBRELYRICS_API_VERSION = 2`) and a stable `META.id` (lower-case letters and digits only). Version 1 plugins do not load.
 
 ### Installing Plugins
 
@@ -53,8 +56,17 @@ Plugin packages follow the naming convention `librelyrics-{service}`. Check the 
 ### Command Line
 
 ```bash
-# Fetch lyrics for a single track (requires appropriate plugin installed)
+# Fetch lyrics for a single track (URL plugin only when search_priority is empty)
 librelyrics https://open.spotify.com/track/...
+
+# Only the plugin that matches the URL (no search list)
+librelyrics https://open.spotify.com/track/... --direct
+
+# Resolve the URL, then fetch lyrics from a named plugin id
+librelyrics https://open.spotify.com/track/... --from applemusic
+
+# Metadata only (needs a SEARCH plugin)
+librelyrics --artist "Artist" --title "Track"
 
 # Fetch lyrics for an album
 librelyrics https://open.spotify.com/album/...
@@ -72,13 +84,14 @@ librelyrics plugin list
 ### As a Library
 
 ```python
-from librelyrics import LibreLyrics
+from librelyrics import LibreLyrics, TrackQuery
 
 ll = LibreLyrics()
 
-# Fetch lyrics for a track
 response = ll.fetch("https://open.spotify.com/track/...")
 print(response.to_lrc())
+
+response = ll.fetch_query(TrackQuery(artist="Artist", title="Track"))
 ```
 
 ## Configuration
@@ -87,9 +100,9 @@ Run `librelyrics config edit` for an interactive configuration editor, or manual
 
 ```bash
 librelyrics config set download_path ./lyrics
-librelyrics config set synced_lyrics true
+librelyrics config set preferred_lyrics_order RICH
 
-# Plugin-specific configuration (example for Spotify plugin)
+# Plugin-specific configuration (key is META.id, example spotify)
 librelyrics config set plugins.spotify.sp_dc YOUR_SP_DC_COOKIE
 ```
 
@@ -99,7 +112,11 @@ librelyrics config set plugins.spotify.sp_dc YOUR_SP_DC_COOKIE
 |-----|---------|-------------|
 | `download_path` | `downloads` | Output directory for lyrics files |
 | `create_folder` | `true` | Create folders for albums/playlists |
-| `synced_lyrics` | `true` | Prefer synced lyrics when available |
+| `preferred_lyrics_order` | `RICH, SYNCED, UNSYNCED` | Stop at the first listed quality (RICH is best) |
+| `search_priority` | `[]` | Plugin ids to try after resolve. Empty = URL plugin only |
+| `max_search_attempts` | `5` | Cap on search plugins called per track |
+| `plugin_directories` | `[]` | Extra plugin dirs. Empty still uses `<config_dir>/plugins` |
+| `max_concurrent_tracks` | `4` | Parallel per-track fetches in a batch |
 | `enhanced_lrc` | `true` | Use Enhanced LRC format for word-level timing |
 | `force_download` | `false` | Overwrite existing lyrics files |
 
@@ -113,11 +130,12 @@ from librelyrics.modules.base import LyricsModule, ModuleMeta, ModuleCapability
 
 class MyPlugin(LyricsModule):
     META = ModuleMeta(
+        id="myservice",
         name="MyService",
         regex=re.compile(r"myservice\.com/track/"),
         capabilities=frozenset({ModuleCapability.SINGLE_TRACK}),
     )
-    LIBRELYRICS_API_VERSION = 1
+    LIBRELYRICS_API_VERSION = 2
 
     def fetch(self):
         # Your implementation here

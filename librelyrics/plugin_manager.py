@@ -109,6 +109,7 @@ def list_plugins(config: dict | None = None) -> list[dict]:
 
         plugin_info = {
             'name': meta.name,
+            'id': meta.id,
             'position': position,
             'requires_auth': meta.requires_auth,
             'description': meta.description,
