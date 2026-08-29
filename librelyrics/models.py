@@ -5,6 +5,20 @@ from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
+class TrackQuery:
+    """Input for match, resolve, search, and fetch.
+
+    Carry a URL, metadata, or both after a URL is resolved.
+    """
+
+    url: str | None = None
+    artist: str | None = None
+    title: str | None = None
+    album: str | None = None
+    duration_ms: int | None = None
+
+
+@dataclass(frozen=True)
 class LyricsWord:
     """A single word with timing for rich/karaoke lyrics."""
     word: str
