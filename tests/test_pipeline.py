@@ -1,5 +1,6 @@
 from librelyrics.config import ConfigManager, get_default_config
 from librelyrics.exceptions import (
+    ConfigurationError,
     DirectModeError,
     LyricsNotFound,
     UnknownPluginError,
@@ -7,7 +8,7 @@ from librelyrics.exceptions import (
 from librelyrics.models import TrackQuery
 from librelyrics.pipeline import fetch_batch_query, fetch_query
 from librelyrics.quality import is_good_enough, plugin_can_satisfy
-from tests.fakes import PlainOnly, SearchAlpha, SearchBeta, UrlPlugin
+from tests.fakes import AlbumFetchOnly, PlainOnly, SearchAlpha, SearchBeta, UrlPlugin
 
 
 def _cm(**overrides) -> ConfigManager:
@@ -180,6 +181,28 @@ def test_list_tracks_then_per_track_pipeline() -> None:
     assert len(responses) == 2
     assert all(r.source == "Alpha" for r in responses)
     assert [r.title for r in responses] == ["One", "Two"]
+
+
+def test_priority_album_does_not_use_url_fetch_album() -> None:
+    try:
+        fetch_batch_query(
+            TrackQuery(url="https://albumonly.example/album/1"),
+            [AlbumFetchOnly, SearchAlpha],
+            _cm(search_priority=["alpha"]),
+        )
+        raise AssertionError("expected ConfigurationError")
+    except ConfigurationError as exc:
+        assert "list_tracks" in str(exc)
+        assert "search_priority" in str(exc)
+
+
+def test_empty_priority_album_uses_fetch_album() -> None:
+    responses = fetch_batch_query(
+        TrackQuery(url="https://albumonly.example/album/1"),
+        [AlbumFetchOnly],
+        _cm(search_priority=[]),
+    )
+    assert [r.source for r in responses] == ["AlbumOnly-album"]
 
 
 def test_direct_batch_stays_on_url_plugin() -> None:

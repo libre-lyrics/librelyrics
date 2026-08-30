@@ -165,3 +165,28 @@ class NoIdPlugin(LyricsModule):
 
     def fetch(self) -> LyricsResponse:
         return _response(source="noid", query=self.query)
+
+
+class AlbumFetchOnly(LyricsModule):
+    """Album URL plugin with fetch_album but no list_tracks (typical API 1 port)."""
+
+    META = ModuleMeta(
+        id="albumonly",
+        name="AlbumOnly",
+        regex=re.compile(r"albumonly\.example/album/"),
+        capabilities=frozenset({
+            ModuleCapability.SINGLE_TRACK,
+            ModuleCapability.ALBUM,
+        }),
+    )
+    LIBRELYRICS_API_VERSION = LIBRELYRICS_API_VERSION
+
+    def fetch(self) -> LyricsResponse:
+        return _response(source="AlbumOnly-fetch", query=self.query)
+
+    def fetch_album(self) -> list[LyricsResponse]:
+        return [_response(
+            source="AlbumOnly-album",
+            query=self.query,
+            title="Bulk",
+        )]

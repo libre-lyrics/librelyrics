@@ -103,6 +103,8 @@ def test_get_plugin_for_url_none_without_url() -> None:
 def test_get_plugin_by_id() -> None:
     assert get_plugin_by_id([UrlPlugin, SearchAlpha], "alpha") is SearchAlpha
     assert get_plugin_by_id([UrlPlugin], "missing") is None
+    assert get_plugin_by_id([SearchAlpha], "Alpha") is SearchAlpha
+    assert get_plugin_by_id([UrlPlugin], "url plug") is UrlPlugin
 
 
 def test_default_config_has_search_keys() -> None:

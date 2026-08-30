@@ -29,6 +29,11 @@ from librelyrics.search_query import search_query_variants
 logger = logging.getLogger("librelyrics.pipeline")
 
 
+def _search_priority_ids(config_manager: ConfigManager) -> list[str]:
+    raw = config_manager.get("search_priority") or []
+    return [str(item).strip() for item in raw if str(item).strip()]
+
+
 def apply_cli_overrides(resolved: TrackQuery, original: TrackQuery) -> TrackQuery:
     """CLI (original) fields win when they are set."""
     return TrackQuery(
@@ -101,6 +106,8 @@ def fetch_batch_query(
     is_playlist = (
         plugin_cls.has_capability(ModuleCapability.PLAYLIST) and "playlist" in url_l
     )
+    priority = _search_priority_ids(config_manager)
+    logger.debug("search_priority=%s", priority)
 
     if direct:
         if is_album:
@@ -110,6 +117,25 @@ def fetch_batch_query(
         return [plugin.fetch_with_retry()]
 
     if is_album or is_playlist:
+        if priority:
+            try:
+                tracks = plugin.list_tracks()
+            except NotImplementedError as exc:
+                kind = "album" if is_album else "playlist"
+                raise ConfigurationError(
+                    f"{plugin_cls.META.name} does not implement list_tracks(), "
+                    f"which is required to use search_priority on an {kind} URL. "
+                    f"Update the URL plugin, or pass --direct to fetch lyrics from "
+                    f"{plugin_cls.META.name}."
+                ) from exc
+            logger.debug(
+                "Listed %s tracks; searching lyrics via %s",
+                len(tracks),
+                ", ".join(priority),
+            )
+            return _fetch_tracks_concurrent(
+                tracks, plugins, config_manager, from_plugin=from_plugin,
+            )
         try:
             tracks = plugin.list_tracks()
         except NotImplementedError:
@@ -196,9 +222,11 @@ def _fetch_default(
     config_manager: ConfigManager,
 ) -> LyricsResponse:
     query = resolve_query(query, plugins, config_manager)
-    priority = list(config_manager.get("search_priority") or [])
+    priority = _search_priority_ids(config_manager)
+    logger.debug("search_priority=%s", priority)
 
     if priority:
+        logger.debug("Searching lyrics via %s", ", ".join(priority))
         return _search_loop(query, plugins, config_manager, priority)
 
     if query.url:

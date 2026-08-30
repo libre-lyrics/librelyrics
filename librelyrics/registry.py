@@ -5,6 +5,7 @@ Discovers plugins via Python entry points (group: 'librelyrics.plugins').
 from __future__ import annotations
 
 import logging
+import re
 from importlib.metadata import entry_points
 
 from librelyrics.exceptions import NoPluginsFoundError
@@ -201,8 +202,18 @@ def get_plugin_by_id(
     plugins: list[type[LyricsModule]],
     plugin_id: str,
 ) -> type[LyricsModule] | None:
-    """Return the plugin with the given id, or None."""
+    """Return the plugin with the given id, or a matching display name."""
+    key = plugin_id.strip().lower()
+    if not key:
+        return None
+    compact = re.sub(r"[^a-z0-9]", "", key)
     for plugin_cls in plugins:
-        if plugin_cls.META.id == plugin_id:
+        if plugin_cls.META.id == key:
+            return plugin_cls
+    for plugin_cls in plugins:
+        name = plugin_cls.META.name.lower()
+        if name == key or re.sub(r"[^a-z0-9]", "", name) == compact:
+            return plugin_cls
+        if plugin_cls.META.id == compact:
             return plugin_cls
     return None
