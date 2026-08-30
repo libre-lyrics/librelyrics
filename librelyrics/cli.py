@@ -29,6 +29,7 @@ from librelyrics.exceptions import (
     LyricsNotFound,
     MissingMetadataError,
     NoMatchingModuleError,
+    NoPluginsFoundError,
     UnknownPluginError,
 )
 from librelyrics.logging_config import setup_logging
@@ -498,6 +499,9 @@ def handle_fetch(
 
     try:
         librelyrics = LibreLyrics(verbose=verbose)
+    except NoPluginsFoundError as e:
+        print_error(str(e))
+        return 1
     except ConfigurationError as e:
         print_error(str(e))
         console.print("[dim]Run 'librelyrics config edit' to configure[/dim]")

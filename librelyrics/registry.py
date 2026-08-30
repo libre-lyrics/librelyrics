@@ -17,6 +17,43 @@ from librelyrics.modules.base import (
 
 logger = logging.getLogger('librelyrics.registry')
 
+NO_PLUGINS_INSTALL_MESSAGE = "No plugins found. Install a plugin to continue."
+NO_API2_PLUGINS_MESSAGE = (
+    "No API 2 plugins loaded. LibreLyrics no longer loads API 1 plugins; "
+    "update your plugin packages and try again."
+)
+
+
+def plugin_import_failure_message(entry_point_name: str, exc: BaseException) -> str:
+    """User-facing reason a plugin module failed to import."""
+    if _looks_like_api1_modulemeta_error(exc):
+        return (
+            f"Plugin '{entry_point_name}' is still API 1 and cannot load. "
+            f"LibreLyrics now requires API 2 — update the plugin package."
+        )
+    return f"Failed to load external plugin '{entry_point_name}': {exc}"
+
+
+def _looks_like_api1_modulemeta_error(exc: BaseException) -> bool:
+    if not isinstance(exc, TypeError):
+        return False
+    text = str(exc)
+    return "ModuleMeta" in text or "argument: 'id'" in text
+
+
+def no_compatible_plugins_message(
+    entry_point_count: int,
+    *,
+    import_failures: list[str],
+    rejected: list[type[LyricsModule]],
+) -> str:
+    """Message when discovery produced no loadable API 2 plugins."""
+    if entry_point_count == 0:
+        return NO_PLUGINS_INSTALL_MESSAGE
+    if import_failures or rejected:
+        return NO_API2_PLUGINS_MESSAGE
+    return NO_PLUGINS_INSTALL_MESSAGE
+
 
 def discover_external_plugins() -> list[type[LyricsModule]]:
     """Discover external plugins via Python entry points.
@@ -29,8 +66,15 @@ def discover_external_plugins() -> list[type[LyricsModule]]:
     Returns:
         List of discovered plugin classes.
     """
+    plugins, _, _ = _discover_plugins()
+    return plugins
+
+
+def _discover_plugins() -> tuple[list[type[LyricsModule]], list[str], int]:
+    """Return (imported plugins, failed entry-point names, entry-point count)."""
     plugins: list[type[LyricsModule]] = []
-    eps = entry_points(group='librelyrics.plugins')
+    failed: list[str] = []
+    eps = list(entry_points(group='librelyrics.plugins'))
 
     for ep in eps:
         try:
@@ -40,19 +84,22 @@ def discover_external_plugins() -> list[type[LyricsModule]]:
                 logger.warning(
                     f"Entry point '{ep.name}' does not point to a LyricsModule subclass"
                 )
+                failed.append(ep.name)
                 continue
 
             if not hasattr(plugin_cls, 'META'):
                 logger.warning(f"Plugin '{ep.name}' missing META attribute")
+                failed.append(ep.name)
                 continue
 
             plugins.append(plugin_cls)
             logger.debug(f"Discovered external plugin: {plugin_cls.META.name}")
 
         except Exception as e:
-            logger.warning(f"Failed to load external plugin '{ep.name}': {e}")
+            logger.warning(plugin_import_failure_message(ep.name, e))
+            failed.append(ep.name)
 
-    return plugins
+    return plugins, failed, len(eps)
 
 
 def validate_plugin(plugin_cls: type[LyricsModule]) -> bool:
@@ -66,9 +113,14 @@ def validate_plugin(plugin_cls: type[LyricsModule]) -> bool:
         return False
 
     if plugin_version != LIBRELYRICS_API_VERSION:
+        display = getattr(getattr(plugin_cls, 'META', None), 'name', None)
+        display = display or plugin_cls.__name__
         logger.warning(
-            f"Plugin '{plugin_cls.__name__}' requires API version {plugin_version}, "
-            f"but current version is {LIBRELYRICS_API_VERSION}"
+            "Plugin '%s' uses API %s; LibreLyrics now requires API %s. "
+            "Update the plugin package.",
+            display,
+            plugin_version,
+            LIBRELYRICS_API_VERSION,
         )
         return False
 
@@ -106,11 +158,19 @@ def dedupe_plugins_by_id(
 
 def load_all_plugins(config: dict | None = None) -> list[type[LyricsModule]]:
     """Load all available plugins from entry points."""
-    plugins = dedupe_plugins_by_id(discover_external_plugins())
+    plugins, failed, entry_point_count = _discover_plugins()
+    plugins = dedupe_plugins_by_id(plugins)
     valid_plugins = [p for p in plugins if validate_plugin(p)]
 
     if not valid_plugins:
-        raise NoPluginsFoundError("No plugins found. Install a plugin to continue.")
+        rejected = [p for p in plugins if p not in valid_plugins]
+        raise NoPluginsFoundError(
+            no_compatible_plugins_message(
+                entry_point_count,
+                import_failures=failed,
+                rejected=rejected,
+            )
+        )
 
     logger.debug(f"Loaded {len(valid_plugins)} plugins")
     return valid_plugins
