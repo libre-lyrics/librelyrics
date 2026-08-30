@@ -14,13 +14,15 @@ from dataclasses import dataclass, field
 from enum import Enum, Flag, auto
 from typing import Any, ClassVar
 
-from librelyrics.exceptions import RateLimitError
-from librelyrics.models import LyricsResponse
+from librelyrics.exceptions import LyricsNotFound, RateLimitError
+from librelyrics.models import LyricsResponse, TrackQuery
 
 logger = logging.getLogger('librelyrics.modules.base')
 
 # Current API version - plugins must match this to be loaded
-LIBRELYRICS_API_VERSION = 1
+LIBRELYRICS_API_VERSION = 2
+
+PLUGIN_ID_PATTERN = re.compile(r'^[a-z0-9]+$')
 
 
 class LyricsType(Enum):
@@ -47,11 +49,13 @@ class ModuleCapability(Flag):
         ALBUM: Can fetch an entire album.
         PLAYLIST: Can fetch an entire playlist.
         SEARCH: Can search for a track by metadata.
+        RESOLVE: Can fill artist, title, album, and duration from a URL.
     """
     SINGLE_TRACK = auto()
     ALBUM = auto()
     PLAYLIST = auto()
     SEARCH = auto()
+    RESOLVE = auto()
 
 
 @dataclass(frozen=True)
@@ -59,6 +63,7 @@ class ModuleMeta:
     """Metadata describing a lyrics module's capabilities.
 
     Attributes:
+        id: Stable plugin id (lower-case letters and digits only).
         name: Human-readable name for the module.
         regex: Compiled pattern to match URLs this module can handle.
         requires_auth: Whether this module requires authentication config.
@@ -69,8 +74,9 @@ class ModuleMeta:
                        Used by the interactive config editor so the CLI
                        never needs to hardcode plugin-specific fields.
     """
+    id: str
     name: str
-    regex: re.Pattern[str]
+    regex: re.Pattern[str] | None = None
     requires_auth: bool = False
     description: str = ""
     lyrics_types: frozenset[LyricsType] = field(
@@ -80,6 +86,13 @@ class ModuleMeta:
         default_factory=lambda: frozenset({ModuleCapability.SINGLE_TRACK})
     )
     config_schema: dict[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not PLUGIN_ID_PATTERN.fullmatch(self.id):
+            raise ValueError(
+                f"Plugin id {self.id!r} must contain only lower-case letters "
+                "and digits"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -101,6 +114,7 @@ class LyricsModule(ABC):
     Example:
         class MyModule(LyricsModule):
             META = ModuleMeta(
+                id="myservice",
                 name="MyService",
                 regex=re.compile(r"myservice\\.com/track/"),
                 capabilities=frozenset({
@@ -111,7 +125,7 @@ class LyricsModule(ABC):
                     'api_key': 'API key for MyService',
                 },
             )
-            LIBRELYRICS_API_VERSION = 1
+            LIBRELYRICS_API_VERSION = 2
 
             def fetch(self) -> LyricsResponse:
                 # ... implementation
@@ -140,15 +154,20 @@ class LyricsModule(ABC):
         cls._before_fetch_hooks = []
         cls._after_fetch_hooks = []
 
-    def __init__(self, url: str, config: dict) -> None:
-        """Initialize module with target URL and configuration.
+    def __init__(self, query: TrackQuery, config: dict) -> None:
+        """Initialize module with a track query and configuration.
 
         Args:
-            url: The URL to fetch lyrics from.
+            query: URL and/or metadata for the target track.
             config: Plugin-specific configuration dictionary.
         """
-        self.url = url
+        self.query = query
         self.config = config
+
+    @property
+    def url(self) -> str | None:
+        """URL from the current query, if any."""
+        return self.query.url
 
     # ------------------------------------------------------------------
     # Lifecycle hook registration
@@ -175,16 +194,20 @@ class LyricsModule(ABC):
     # URL matching
     # ------------------------------------------------------------------
     @classmethod
-    def matches(cls, url: str) -> bool:
-        """Check if this module can handle the given URL.
+    def matches(cls, query: TrackQuery) -> bool:
+        """Check if this module can handle the given query.
+
+        Default: regex-match ``query.url``. Search plugins override this.
 
         Args:
-            url: URL to check.
+            query: Track query to check.
 
         Returns:
-            True if this module can handle the URL.
+            True if this module can handle the query.
         """
-        return cls.META.regex.search(url) is not None
+        if query.url is None or cls.META.regex is None:
+            return False
+        return cls.META.regex.search(query.url) is not None
 
     @classmethod
     def has_capability(cls, cap: ModuleCapability) -> bool:
@@ -232,7 +255,7 @@ class LyricsModule(ABC):
     # ------------------------------------------------------------------
     @abstractmethod
     def fetch(self) -> LyricsResponse:
-        """Fetch lyrics for the configured URL.
+        """Fetch lyrics for the configured query.
 
         Returns:
             LyricsResponse containing the fetched lyrics.
@@ -243,40 +266,67 @@ class LyricsModule(ABC):
         """
         ...
 
+    def resolve(self) -> TrackQuery:
+        """Return the query with artist, title, album, and duration filled in.
+
+        Required when ``ModuleCapability.RESOLVE`` is declared.
+
+        Returns:
+            A new TrackQuery with metadata from the current URL.
+        """
+        raise NotImplementedError(
+            f"{self.META.name} does not support resolve()."
+        )
+
+    def list_tracks(self) -> list[TrackQuery]:
+        """Return metadata for every track in the album or playlist.
+
+        Required when ``ModuleCapability.ALBUM`` or ``PLAYLIST`` is declared.
+        The plugin must handle pagination internally.
+
+        Returns:
+            Complete list of TrackQuery objects.
+        """
+        raise NotImplementedError(
+            f"{self.META.name} does not support list_tracks()."
+        )
+
     # ------------------------------------------------------------------
     # Batch fetch (optional — declare capability to enable)
     # ------------------------------------------------------------------
     def fetch_album(self) -> list[LyricsResponse]:
         """Fetch lyrics for all tracks in an album.
 
-        Override this method and add ``ModuleCapability.ALBUM`` to
-        ``META.capabilities`` to enable album-level fetching.
-
-        Returns:
-            List of LyricsResponse objects.
-
-        Raises:
-            NotImplementedError: If the module does not support album fetch.
+        Default: call ``list_tracks()`` then ``fetch_with_retry()`` per track.
+        Override for a faster bulk lyrics API.
         """
-        raise NotImplementedError(
-            f"{self.META.name} does not support album-level fetching."
-        )
+        return self._fetch_listed_tracks()
 
     def fetch_playlist(self) -> list[LyricsResponse]:
         """Fetch lyrics for all tracks in a playlist.
 
-        Override this method and add ``ModuleCapability.PLAYLIST`` to
-        ``META.capabilities`` to enable playlist-level fetching.
-
-        Returns:
-            List of LyricsResponse objects.
-
-        Raises:
-            NotImplementedError: If the module does not support playlist fetch.
+        Default: call ``list_tracks()`` then ``fetch_with_retry()`` per track.
+        Override for a faster bulk lyrics API.
         """
-        raise NotImplementedError(
-            f"{self.META.name} does not support playlist-level fetching."
-        )
+        return self._fetch_listed_tracks()
+
+    def _fetch_listed_tracks(self) -> list[LyricsResponse]:
+        results: list[LyricsResponse] = []
+        for track in self.list_tracks():
+            plugin = self.__class__(track, self.config)
+            try:
+                results.append(plugin.fetch_with_retry())
+            except LyricsNotFound:
+                logger.warning(
+                    "No lyrics found for track: %s - %s",
+                    track.artist, track.title,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Failed to fetch lyrics for track %s: %s",
+                    track.title, exc,
+                )
+        return results
 
     # ------------------------------------------------------------------
     # Retry wrapper
@@ -332,4 +382,4 @@ class LyricsModule(ABC):
                 logger.debug("Lifecycle hook %s failed", hook, exc_info=True)
 
     def __repr__(self) -> str:
-        return f"<{self.__class__.__name__} url={self.url!r}>"
+        return f"<{self.__class__.__name__} query={self.query!r}>"
