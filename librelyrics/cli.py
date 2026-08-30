@@ -14,7 +14,7 @@ import os
 import re
 import sys
 from contextlib import ExitStack, redirect_stderr, redirect_stdout
-from typing import Annotated
+from typing import Annotated, Optional
 
 import questionary
 import typer
@@ -83,6 +83,13 @@ def _version_callback(value: bool) -> None:
         raise typer.Exit()
 
 
+def _normalize_cli_url(url: str | None) -> str | None:
+    """Strip whitespace and a trailing PowerShell line-continuation backslash."""
+    if url is None:
+        return None
+    return url.strip().rstrip("\\")
+
+
 @app.callback()
 def callback(
     ctx: typer.Context,
@@ -90,8 +97,9 @@ def callback(
         bool,
         typer.Option("--verbose", "-v", help="Enable verbose debug output."),
     ] = False,
+    # Optional[...] (not `X | None`): Typer 0.9 cannot convert PEP 604 unions.
     version: Annotated[
-        bool | None,
+        Optional[bool],
         typer.Option(
             "--version", "-V",
             help="Show version and exit.",
@@ -100,7 +108,7 @@ def callback(
         ),
     ] = None,
     directory: Annotated[
-        str | None,
+        Optional[str],
         typer.Option("--directory", "-d", metavar="PATH", help="Output directory for lyrics files."),
     ] = None,
     force: Annotated[
@@ -122,19 +130,19 @@ def callback(
 def fetch_command(
     ctx: typer.Context,
     url: Annotated[
-        str | None,
+        Optional[str],
         typer.Argument(help="URL or local path to fetch lyrics for."),
     ] = None,
     artist: Annotated[
-        str | None,
+        Optional[str],
         typer.Option("--artist", help="Track artist for a metadata search."),
     ] = None,
     title: Annotated[
-        str | None,
+        Optional[str],
         typer.Option("--title", help="Track title for a metadata search."),
     ] = None,
     album: Annotated[
-        str | None,
+        Optional[str],
         typer.Option("--album", help="Album name (optional metadata)."),
     ] = None,
     direct: Annotated[
@@ -142,7 +150,7 @@ def fetch_command(
         typer.Option("--direct", "-D", help="Fetch only from the plugin that matches the URL."),
     ] = False,
     from_plugin: Annotated[
-        str | None,
+        Optional[str],
         typer.Option("--from", help="Force lyrics from this plugin id after resolve."),
     ] = None,
 ) -> None:
@@ -482,6 +490,7 @@ def handle_fetch(
     from_plugin: str | None = None,
 ) -> int:
     """Handle fetching lyrics for a URL or metadata query."""
+    url = _normalize_cli_url(url)
     if show_logo:
         print_logo()
 
