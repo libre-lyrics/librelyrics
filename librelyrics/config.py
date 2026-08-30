@@ -43,12 +43,10 @@ def get_default_config() -> dict:
         'album_folder_name': '{name} - {artists}',
         'play_folder_name': '{name} - {owner}',
         'file_name': '{track_number}. {name}',
-        'enhanced_lrc': True,  # Use Enhanced LRC format for rich synced lyrics
         'force_download': False,
         'preferred_lyrics_order': ['RICH', 'SYNCED', 'UNSYNCED'],
         'search_priority': [],
         'max_search_attempts': 5,
-        'plugin_directories': [],
         'max_concurrent_tracks': 4,
         'plugins': {},  # Plugin-specific configs go here
     }
@@ -158,12 +156,12 @@ class ConfigManager:
         Returns:
             Merged configuration dictionary for the plugin.
         """
-        plugin_name = plugin_cls.META.id
+        plugin_name = plugin_cls.META.name.lower()
         defaults = plugin_cls.default_config()
         plugins_config = self._config.get('plugins', {})
         stored = plugins_config.get(plugin_name, {})
         if not stored:
-            stored = plugins_config.get(plugin_cls.META.name.lower(), {})
+            stored = plugins_config.get(plugin_cls.META.id, {})
         merged = {**defaults, **stored}
         return merged
 
@@ -189,7 +187,7 @@ class ConfigManager:
             modified = True
 
         for plugin_cls in plugins:
-            plugin_key = plugin_cls.META.id
+            plugin_key = plugin_cls.META.name.lower()
             defaults = plugin_cls.default_config()
 
             if not defaults:

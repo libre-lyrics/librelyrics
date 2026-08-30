@@ -1,15 +1,11 @@
 """Plugin discovery and registration system.
 
-Discovers plugins via Python entry points (group: 'librelyrics.plugins')
-and via local plugin directories.
+Discovers plugins via Python entry points (group: 'librelyrics.plugins').
 """
 from __future__ import annotations
 
-import importlib.util
 import logging
-import sys
 from importlib.metadata import entry_points
-from pathlib import Path
 
 from librelyrics.exceptions import NoPluginsFoundError
 from librelyrics.models import TrackQuery
@@ -34,12 +30,7 @@ def discover_external_plugins() -> list[type[LyricsModule]]:
         List of discovered plugin classes.
     """
     plugins: list[type[LyricsModule]] = []
-
-    try:
-        eps = entry_points(group='librelyrics.plugins')
-    except TypeError:
-        all_eps = entry_points()
-        eps = all_eps.get('librelyrics.plugins', [])
+    eps = entry_points(group='librelyrics.plugins')
 
     for ep in eps:
         try:
@@ -62,57 +53,6 @@ def discover_external_plugins() -> list[type[LyricsModule]]:
             logger.warning(f"Failed to load external plugin '{ep.name}': {e}")
 
     return plugins
-
-
-def discover_directory_plugins(directories: list[Path]) -> list[type[LyricsModule]]:
-    """Load LyricsModule subclasses from plugin directories."""
-    plugins: list[type[LyricsModule]] = []
-    for directory in directories:
-        if not directory.is_dir():
-            continue
-        for path in sorted(directory.iterdir()):
-            if path.name.startswith('_') or path.name.startswith('.'):
-                continue
-            module_file: Path | None = None
-            if path.is_file() and path.suffix == '.py':
-                module_file = path
-            elif path.is_dir() and (path / '__init__.py').exists():
-                module_file = path / '__init__.py'
-            if module_file is None:
-                continue
-            plugins.extend(_load_module_plugins(module_file))
-    return plugins
-
-
-def _load_module_plugins(module_file: Path) -> list[type[LyricsModule]]:
-    module_name = (
-        f"librelyrics_dirplugin_{module_file.parent.name}_"
-        f"{module_file.stem}_{id(module_file)}"
-    )
-    spec = importlib.util.spec_from_file_location(module_name, module_file)
-    if spec is None or spec.loader is None:
-        logger.warning("Cannot load plugin file: %s", module_file)
-        return []
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
-    try:
-        spec.loader.exec_module(module)
-    except Exception as exc:
-        logger.warning("Failed to load plugin file %s: %s", module_file, exc)
-        sys.modules.pop(module_name, None)
-        return []
-
-    found: list[type[LyricsModule]] = []
-    for value in vars(module).values():
-        if (
-            isinstance(value, type)
-            and issubclass(value, LyricsModule)
-            and value is not LyricsModule
-            and hasattr(value, 'META')
-        ):
-            found.append(value)
-            logger.debug("Discovered directory plugin: %s", value.META.name)
-    return found
 
 
 def validate_plugin(plugin_cls: type[LyricsModule]) -> bool:
@@ -146,50 +86,27 @@ def validate_plugin(plugin_cls: type[LyricsModule]) -> bool:
     return True
 
 
-def merge_plugins(
-    entry_point_plugins: list[type[LyricsModule]],
-    directory_plugins: list[type[LyricsModule]],
+def dedupe_plugins_by_id(
+    plugins: list[type[LyricsModule]],
 ) -> list[type[LyricsModule]]:
-    """Merge plugin lists. Directory plugins replace the same id."""
+    """Keep one plugin per META.id. Later entries win. Sort by id."""
     by_id: dict[str, type[LyricsModule]] = {}
-    for plugin_cls in entry_point_plugins:
-        by_id[plugin_cls.META.id] = plugin_cls
-    for plugin_cls in directory_plugins:
+    for plugin_cls in plugins:
         existing = by_id.get(plugin_cls.META.id)
         if existing is not None:
             logger.warning(
-                "Directory plugin %s replaces entry-point plugin %s",
+                "Plugin %s replaces %s for id %s",
                 plugin_cls.__name__,
                 existing.__name__,
+                plugin_cls.META.id,
             )
         by_id[plugin_cls.META.id] = plugin_cls
     return sorted(by_id.values(), key=lambda p: p.META.id)
 
 
-def plugin_directories_from_config(
-    config: dict | None,
-    config_path: Path | None = None,
-) -> list[Path]:
-    """Resolve plugin directories from config.
-
-    An empty plugin_directories list still uses <config_dir>/plugins.
-    """
-    from librelyrics.config import get_config_path
-
-    config = config or {}
-    configured = config.get('plugin_directories') or []
-    if configured:
-        return [Path(p).expanduser() for p in configured]
-    base = (config_path or get_config_path()).parent
-    return [base / 'plugins']
-
-
 def load_all_plugins(config: dict | None = None) -> list[type[LyricsModule]]:
-    """Load all available plugins from entry points and plugin directories."""
-    plugins = merge_plugins(
-        discover_external_plugins(),
-        discover_directory_plugins(plugin_directories_from_config(config)),
-    )
+    """Load all available plugins from entry points."""
+    plugins = dedupe_plugins_by_id(discover_external_plugins())
     valid_plugins = [p for p in plugins if validate_plugin(p)]
 
     if not valid_plugins:
