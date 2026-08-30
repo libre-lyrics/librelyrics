@@ -10,7 +10,7 @@ from librelyrics.exceptions import (
                                     LyricsNotFound,
                                     NoMatchingModuleError,
 )
-from librelyrics.models import LyricsLine, LyricsResponse
+from librelyrics.models import LyricsLine, LyricsResponse, TrackQuery
 from librelyrics.modules.base import LyricsType, ModuleCapability
 
 __version__ = version("librelyrics")
@@ -19,6 +19,7 @@ __all__ = [
     'LibreLyrics',
     'LyricsResponse',
     'LyricsLine',
+    'TrackQuery',
     'LyricsType',
     'ModuleCapability',
     'LibreLyricsError',

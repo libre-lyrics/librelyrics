@@ -11,9 +11,10 @@ import re
 from librelyrics.config import ConfigManager
 from librelyrics.exceptions import LyricsNotFound, NoMatchingModuleError
 from librelyrics.logging_config import get_logger, setup_logging
-from librelyrics.models import LyricsResponse
-from librelyrics.modules.base import LyricsModule, ModuleCapability
-from librelyrics.registry import get_plugin_for_url, load_all_plugins
+from librelyrics.models import LyricsResponse, TrackQuery
+from librelyrics.modules.base import LyricsModule
+from librelyrics.pipeline import fetch_batch_query, fetch_query
+from librelyrics.registry import load_all_plugins
 
 logger = get_logger('core')
 
@@ -39,19 +40,23 @@ class LibreLyrics:
         self,
         config: dict | None = None,
         verbose: bool = False,
+        plugins: list[type[LyricsModule]] | None = None,
     ) -> None:
         """Initialize LibreLyrics.
 
         Args:
             config: Optional pre-loaded configuration dictionary.
             verbose: Enable verbose logging.
+            plugins: Optional plugin list (tests). Loads from disk when omitted.
         """
         setup_logging(verbose=verbose)
 
         self.config_manager = ConfigManager(config)
-        self.plugins = load_all_plugins(self.config_manager.raw)
+        if plugins is None:
+            self.plugins = load_all_plugins(self.config_manager.raw)
+        else:
+            self.plugins = plugins
 
-        # Merge plugin default configs
         if self.config_manager.merge_plugin_defaults(self.plugins):
             self.config_manager.save()
 
@@ -62,65 +67,51 @@ class LibreLyrics:
         """Get the raw configuration dictionary."""
         return self.config_manager.raw
 
-    def fetch(self, url: str) -> LyricsResponse:
-        """Fetch lyrics for a URL.
+    def fetch(
+        self,
+        url: str,
+        *,
+        direct: bool = False,
+        from_plugin: str | None = None,
+    ) -> LyricsResponse:
+        """Fetch lyrics for a URL."""
+        return self.fetch_query(
+            TrackQuery(url=url),
+            direct=direct,
+            from_plugin=from_plugin,
+        )
 
-        Finds the first matching plugin and uses it to fetch lyrics.
+    def fetch_query(
+        self,
+        query: TrackQuery,
+        *,
+        direct: bool = False,
+        from_plugin: str | None = None,
+    ) -> LyricsResponse:
+        """Fetch lyrics for a TrackQuery."""
+        return fetch_query(
+            query,
+            self.plugins,
+            self.config_manager,
+            direct=direct,
+            from_plugin=from_plugin,
+        )
 
-        Args:
-            url: URL to fetch lyrics from.
-
-        Returns:
-            LyricsResponse with lyrics data.
-
-        Raises:
-            NoMatchingModuleError: If no plugin matches the URL.
-            LyricsNotFound: If lyrics are not available.
-        """
-        plugin_cls = get_plugin_for_url(self.plugins, url)
-
-        if not plugin_cls:
-            raise NoMatchingModuleError(
-                f"No plugin found that can handle URL: {url}"
-            )
-
-        # Get plugin-specific config
-        plugin_config = self.config_manager.for_plugin(plugin_cls)
-
-        # Instantiate and fetch
-        plugin = plugin_cls(url, plugin_config)
-        return plugin.fetch_with_retry()
-
-    def fetch_batch(self, url: str) -> list[LyricsResponse]:
-        """Fetch lyrics for multiple tracks (album/playlist).
-
-        Args:
-            url: Album or playlist URL.
-
-        Returns:
-            List of LyricsResponse objects.
-
-        Raises:
-            NoMatchingModuleError: If no plugin matches the URL.
-        """
-        plugin_cls = get_plugin_for_url(self.plugins, url)
-
-        if not plugin_cls:
-            raise NoMatchingModuleError(
-                f"No plugin found that can handle URL: {url}"
-            )
-
-        plugin_config = self.config_manager.for_plugin(plugin_cls)
-        plugin = plugin_cls(url, plugin_config)
-
-        # Dispatch based on declared capabilities — no hasattr / URL sniffing
-        if plugin.has_capability(ModuleCapability.ALBUM) and 'album' in url.lower():
-            return plugin.fetch_album()
-        elif plugin.has_capability(ModuleCapability.PLAYLIST) and 'playlist' in url.lower():
-            return plugin.fetch_playlist()
-        else:
-            # Fallback to single fetch
-            return [plugin.fetch()]
+    def fetch_batch(
+        self,
+        url: str,
+        *,
+        direct: bool = False,
+        from_plugin: str | None = None,
+    ) -> list[LyricsResponse]:
+        """Fetch lyrics for multiple tracks (album/playlist) or one track URL."""
+        return fetch_batch_query(
+            TrackQuery(url=url),
+            self.plugins,
+            self.config_manager,
+            direct=direct,
+            from_plugin=from_plugin,
+        )
 
     def list_plugins(self) -> list[type[LyricsModule]]:
         """Get list of loaded plugins.
