@@ -90,31 +90,28 @@ def _normalize_cli_url(url: str | None) -> str | None:
     return url.strip().rstrip("\\")
 
 
+# Typer 0.9 cannot convert PEP 604 `str | None` and is unreliable with
+# Annotated optional Arguments. Use Optional[...] = typer.Option/Argument.
 @app.callback()
 def callback(
     ctx: typer.Context,
-    verbose: Annotated[
-        bool,
-        typer.Option("--verbose", "-v", help="Enable verbose debug output."),
-    ] = False,
-    # Optional[...] (not `X | None`): Typer 0.9 cannot convert PEP 604 unions.
-    version: Annotated[
-        Optional[bool],
-        typer.Option(
-            "--version", "-V",
-            help="Show version and exit.",
-            callback=_version_callback,
-            is_eager=True,
-        ),
-    ] = None,
-    directory: Annotated[
-        Optional[str],
-        typer.Option("--directory", "-d", metavar="PATH", help="Output directory for lyrics files."),
-    ] = None,
-    force: Annotated[
-        bool,
-        typer.Option("--force", "-f", help="Overwrite existing lyrics files."),
-    ] = False,
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Enable verbose debug output.",
+    ),
+    version: bool = typer.Option(
+        False,
+        "--version", "-V",
+        help="Show version and exit.",
+        callback=_version_callback,
+        is_eager=True,
+    ),
+    directory: Optional[str] = typer.Option(
+        None, "--directory", "-d", metavar="PATH",
+        help="Output directory for lyrics files.",
+    ),
+    force: bool = typer.Option(
+        False, "--force", "-f", help="Overwrite existing lyrics files.",
+    ),
 ) -> None:
     """Fetch lyrics from various sources and save as LRC files."""
     ctx.ensure_object(dict)
@@ -129,30 +126,25 @@ def callback(
 @app.command("fetch", hidden=True)
 def fetch_command(
     ctx: typer.Context,
-    url: Annotated[
-        Optional[str],
-        typer.Argument(help="URL or local path to fetch lyrics for."),
-    ] = None,
-    artist: Annotated[
-        Optional[str],
-        typer.Option("--artist", help="Track artist for a metadata search."),
-    ] = None,
-    title: Annotated[
-        Optional[str],
-        typer.Option("--title", help="Track title for a metadata search."),
-    ] = None,
-    album: Annotated[
-        Optional[str],
-        typer.Option("--album", help="Album name (optional metadata)."),
-    ] = None,
-    direct: Annotated[
-        bool,
-        typer.Option("--direct", "-D", help="Fetch only from the plugin that matches the URL."),
-    ] = False,
-    from_plugin: Annotated[
-        Optional[str],
-        typer.Option("--from", help="Force lyrics from this plugin id after resolve."),
-    ] = None,
+    url: Optional[str] = typer.Argument(
+        None, help="URL or local path to fetch lyrics for.",
+    ),
+    artist: Optional[str] = typer.Option(
+        None, "--artist", help="Track artist for a metadata search.",
+    ),
+    title: Optional[str] = typer.Option(
+        None, "--title", help="Track title for a metadata search.",
+    ),
+    album: Optional[str] = typer.Option(
+        None, "--album", help="Album name (optional metadata).",
+    ),
+    direct: bool = typer.Option(
+        False, "--direct", "-D",
+        help="Fetch only from the plugin that matches the URL.",
+    ),
+    from_plugin: Optional[str] = typer.Option(
+        None, "--from", help="Force lyrics from this plugin id after resolve.",
+    ),
 ) -> None:
     """Fetch lyrics for a URL or local path."""
     obj = ctx.ensure_object(dict)
