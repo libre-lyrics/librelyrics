@@ -113,7 +113,7 @@ librelyrics config set plugins.spotify.sp_dc YOUR_SP_DC_COOKIE
 | `download_path` | `downloads` | Output directory for lyrics files |
 | `create_folder` | `true` | Create folders for albums/playlists |
 | `preferred_lyrics_order` | `RICH, SYNCED, UNSYNCED` | Stop at the first listed quality (RICH is best) |
-| `search_priority` | `[]` | Plugin ids to try after resolve. Empty = URL plugin only |
+| `search_priority` | `[]` | Plugin ids to try after resolve. Empty = URL plugin only. Search uses simpler artist/title variants first (primary artist, title before `` - ``). |
 | `max_search_attempts` | `5` | Cap on search plugins called per track |
 | `max_concurrent_tracks` | `4` | Parallel per-track fetches in a batch |
 | `force_download` | `false` | Overwrite existing lyrics files |

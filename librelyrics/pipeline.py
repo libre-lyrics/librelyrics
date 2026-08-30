@@ -24,6 +24,7 @@ from librelyrics.quality import (
     plugin_can_satisfy,
 )
 from librelyrics.registry import get_plugin_by_id, get_plugin_for_url
+from librelyrics.search_query import search_query_variants
 
 logger = logging.getLogger("librelyrics.pipeline")
 
@@ -156,9 +157,37 @@ def _fetch_from(
         )
     if not plugin_cls.has_capability(ModuleCapability.SEARCH):
         raise UnknownPluginError(f"Plugin '{plugin_id}' does not support SEARCH")
-    search_query = replace(query, url=None)
-    plugin = plugin_cls(search_query, config_manager.for_plugin(plugin_cls))
-    return plugin.fetch_with_retry()
+    return _try_search_plugin(plugin_cls, query, config_manager)
+
+
+def _try_search_plugin(
+    plugin_cls: type[LyricsModule],
+    query: TrackQuery,
+    config_manager: ConfigManager,
+) -> LyricsResponse:
+    """Run SEARCH fetch across artist/title variants. Counts as one plugin attempt."""
+    last_error: Exception | None = None
+    for variant in search_query_variants(replace(query, url=None)):
+        logger.debug(
+            "Search %s with artist=%r title=%r",
+            plugin_cls.META.id,
+            variant.artist,
+            variant.title,
+        )
+        plugin = plugin_cls(variant, config_manager.for_plugin(plugin_cls))
+        try:
+            return plugin.fetch_with_retry()
+        except LyricsNotFound as exc:
+            last_error = exc
+            logger.info("%s: %s", plugin_cls.META.name, exc)
+            continue
+        except ProviderError as exc:
+            last_error = exc
+            logger.info("%s failed: %s", plugin_cls.META.name, exc)
+            continue
+    if last_error is not None:
+        raise last_error
+    raise LyricsNotFound("Lyrics not found")
 
 
 def _fetch_default(
@@ -220,9 +249,8 @@ def _search_loop(
         if attempts >= cap:
             break
         attempts += 1
-        plugin = plugin_cls(search_query, config_manager.for_plugin(plugin_cls))
         try:
-            result = plugin.fetch_with_retry()
+            result = _try_search_plugin(plugin_cls, search_query, config_manager)
         except LyricsNotFound as exc:
             logger.info("%s: %s", plugin_cls.META.name, exc)
             continue

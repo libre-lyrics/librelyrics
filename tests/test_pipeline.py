@@ -149,6 +149,28 @@ def test_unknown_id_in_priority_is_skipped() -> None:
     assert result.source == "Alpha"
 
 
+def test_search_uses_primary_artist_and_short_title() -> None:
+    seen: list[tuple[str | None, str | None]] = []
+
+    class Picky(SearchAlpha):
+        def fetch(self):
+            seen.append((self.query.artist, self.query.title))
+            if self.query.artist == "Aksomaniac" and self.query.title == "Amsham":
+                return super().fetch()
+            raise LyricsNotFound("no match")
+
+    result = fetch_query(
+        TrackQuery(
+            artist="Aksomaniac, M.H.R, Bhumi, Circle Tone",
+            title="Amsham - അംശം",
+        ),
+        [Picky],
+        _cm(search_priority=["alpha"]),
+    )
+    assert result.source == "Alpha"
+    assert seen[0] == ("Aksomaniac", "Amsham")
+
+
 def test_list_tracks_then_per_track_pipeline() -> None:
     responses = fetch_batch_query(
         TrackQuery(url="https://example.com/album/1"),
