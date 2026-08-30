@@ -529,8 +529,21 @@ def handle_fetch(
     if plugin_cls:
         console.print(
             f"[dim]URL plugin:[/dim] [cyan]{plugin_cls.META.name}[/cyan] "
-            f"[dim]({plugin_cls.META.id})[/dim]\n"
+            f"[dim]({plugin_cls.META.id})[/dim]"
         )
+        priority = [
+            str(item).strip()
+            for item in (librelyrics.config_manager.get("search_priority") or [])
+            if str(item).strip()
+        ]
+        if priority:
+            console.print(
+                f"[dim]Lyrics search_priority:[/dim] [cyan]{', '.join(priority)}[/cyan]\n"
+            )
+        else:
+            console.print(
+                "[dim]search_priority is empty; lyrics come from the URL plugin.[/dim]\n"
+            )
         plugin_config = librelyrics.config_manager.for_plugin(plugin_cls)
         if plugin_cls.META.requires_auth:
             try:
@@ -578,6 +591,9 @@ def handle_fetch(
         return 0 if successful else 1
 
     except DirectModeError as e:
+        print_error(str(e))
+        return 1
+    except ConfigurationError as e:
         print_error(str(e))
         return 1
     except UnknownPluginError as e:
