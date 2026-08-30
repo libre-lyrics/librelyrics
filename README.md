@@ -14,7 +14,7 @@ A modular, plugin-based lyrics fetcher. Fetch synced and unsynced lyrics from va
 
 - **Synced lyrics** — Line-by-line timestamps (LRC format)
 - **Rich synced lyrics** — Word-by-word karaoke-style timing (Enhanced LRC)
-- **Plugin architecture** — External plugins via entry points or a plugin directory
+- **Plugin architecture** — External plugins via entry points
 - **Metadata search** — Fetch by artist and title, with a user-defined source list
 - **Batch downloads** — Fetch lyrics for entire albums or playlists
 - **CLI & Library** — Use from the command line or import as a Python library
@@ -28,9 +28,9 @@ pip install librelyrics
 
 ## Plugins
 
-LibreLyrics is a plugin-based system. The core package **does not include any lyrics sources**. Install plugin packages, or put plugin modules in the plugin directory (`~/.config/librelyrics/plugins` on Linux).
+LibreLyrics is a plugin-based system. The core package **does not include any lyrics sources**. Install plugin packages separately.
 
-Plugins must declare **API version 2** (`LIBRELYRICS_API_VERSION = 2`) and a stable `META.id` (lower-case letters and digits only). Version 1 plugins do not load.
+Plugins must declare **API version 2** (`LIBRELYRICS_API_VERSION = 2`) and a stable `META.id` (lower-case letters and digits only). Version 1 plugins do not load. `META.name` is the display name and the key under `plugins` in config.
 
 ### Installing Plugins
 
@@ -102,7 +102,7 @@ Run `librelyrics config edit` for an interactive configuration editor, or manual
 librelyrics config set download_path ./lyrics
 librelyrics config set preferred_lyrics_order RICH
 
-# Plugin-specific configuration (key is META.id, example spotify)
+# Plugin-specific configuration (key is META.name in lower case, example spotify)
 librelyrics config set plugins.spotify.sp_dc YOUR_SP_DC_COOKIE
 ```
 
@@ -115,9 +115,7 @@ librelyrics config set plugins.spotify.sp_dc YOUR_SP_DC_COOKIE
 | `preferred_lyrics_order` | `RICH, SYNCED, UNSYNCED` | Stop at the first listed quality (RICH is best) |
 | `search_priority` | `[]` | Plugin ids to try after resolve. Empty = URL plugin only |
 | `max_search_attempts` | `5` | Cap on search plugins called per track |
-| `plugin_directories` | `[]` | Extra plugin dirs. Empty still uses `<config_dir>/plugins` |
 | `max_concurrent_tracks` | `4` | Parallel per-track fetches in a batch |
-| `enhanced_lrc` | `true` | Use Enhanced LRC format for word-level timing |
 | `force_download` | `false` | Overwrite existing lyrics files |
 
 ## Plugin Development

@@ -258,7 +258,7 @@ def edit_config_interactive() -> int:
     # Discover plugins and merge defaults once
     plugins = load_all_plugins(config)
     for plugin_cls in plugins:
-        plugin_name = plugin_cls.META.id
+        plugin_name = plugin_cls.META.name.lower()
         defaults = plugin_cls.default_config()
         if plugin_name not in config['plugins']:
             config['plugins'][plugin_name] = defaults
@@ -317,7 +317,7 @@ def edit_config_interactive() -> int:
 def _edit_plugin_config(config: dict, plugin_cls: type) -> None:
     """Prompt for a single plugin's config fields."""
     meta = plugin_cls.META
-    plugin_name = meta.id
+    plugin_name = meta.name.lower()
     schema = meta.config_schema
 
     console.print(f"\n[bold green]{meta.name} Plugin[/bold green]")
