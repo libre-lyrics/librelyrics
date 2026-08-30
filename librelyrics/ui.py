@@ -4,8 +4,8 @@ Provides styled console output, progress bars, and formatted displays.
 """
 from __future__ import annotations
 
-import os
 import sys
+
 import questionary
 from rich.console import Console
 from rich.panel import Panel

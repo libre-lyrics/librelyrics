@@ -8,7 +8,12 @@ import logging
 from importlib.metadata import entry_points
 
 from librelyrics.exceptions import NoPluginsFoundError
-from librelyrics.modules.base import LIBRELYRICS_API_VERSION, LyricsModule
+from librelyrics.models import TrackQuery
+from librelyrics.modules.base import (
+    LIBRELYRICS_API_VERSION,
+    PLUGIN_ID_PATTERN,
+    LyricsModule,
+)
 
 logger = logging.getLogger('librelyrics.registry')
 
@@ -25,14 +30,7 @@ def discover_external_plugins() -> list[type[LyricsModule]]:
         List of discovered plugin classes.
     """
     plugins: list[type[LyricsModule]] = []
-
-    try:
-        # Python 3.10+ API
-        eps = entry_points(group='librelyrics.plugins')
-    except TypeError:
-        # Python 3.9 compatibility
-        all_eps = entry_points()
-        eps = all_eps.get('librelyrics.plugins', [])
+    eps = entry_points(group='librelyrics.plugins')
 
     for ep in eps:
         try:
@@ -58,14 +56,7 @@ def discover_external_plugins() -> list[type[LyricsModule]]:
 
 
 def validate_plugin(plugin_cls: type[LyricsModule]) -> bool:
-    """Validate that a plugin is compatible with current API version.
-
-    Args:
-        plugin_cls: Plugin class to validate.
-
-    Returns:
-        True if plugin is compatible, False otherwise.
-    """
+    """Validate that a plugin is compatible with current API version."""
     plugin_version = getattr(plugin_cls, 'LIBRELYRICS_API_VERSION', None)
 
     if plugin_version is None:
@@ -81,32 +72,42 @@ def validate_plugin(plugin_cls: type[LyricsModule]) -> bool:
         )
         return False
 
+    if not hasattr(plugin_cls, 'META'):
+        logger.warning(f"Plugin '{plugin_cls.__name__}' missing META attribute")
+        return False
+
+    plugin_id = getattr(plugin_cls.META, 'id', '')
+    if not plugin_id or not PLUGIN_ID_PATTERN.fullmatch(plugin_id):
+        logger.warning(
+            f"Plugin '{plugin_cls.__name__}' has invalid META.id {plugin_id!r}"
+        )
+        return False
+
     return True
 
 
+def dedupe_plugins_by_id(
+    plugins: list[type[LyricsModule]],
+) -> list[type[LyricsModule]]:
+    """Keep one plugin per META.id. Later entries win. Sort by id."""
+    by_id: dict[str, type[LyricsModule]] = {}
+    for plugin_cls in plugins:
+        existing = by_id.get(plugin_cls.META.id)
+        if existing is not None:
+            logger.warning(
+                "Plugin %s replaces %s for id %s",
+                plugin_cls.__name__,
+                existing.__name__,
+                plugin_cls.META.id,
+            )
+        by_id[plugin_cls.META.id] = plugin_cls
+    return sorted(by_id.values(), key=lambda p: p.META.id)
+
+
 def load_all_plugins(config: dict | None = None) -> list[type[LyricsModule]]:
-    """Load all available plugins.
-
-    Discovers plugins via entry points (librelyrics.plugins group).
-
-    Plugins are sorted alphabetically by name for deterministic ordering.
-
-    Args:
-        config: Optional configuration dict.
-
-    Returns:
-        List of plugin classes sorted alphabetically.
-    """
-    plugins: list[type[LyricsModule]] = []
-
-    # Discover external plugins via entry points
-    plugins.extend(discover_external_plugins())
-
-    # Filter invalid plugins
+    """Load all available plugins from entry points."""
+    plugins = dedupe_plugins_by_id(discover_external_plugins())
     valid_plugins = [p for p in plugins if validate_plugin(p)]
-
-    # Sort alphabetically for deterministic ordering
-    valid_plugins.sort(key=lambda p: p.META.name.lower())
 
     if not valid_plugins:
         raise NoPluginsFoundError("No plugins found. Install a plugin to continue.")
@@ -117,21 +118,31 @@ def load_all_plugins(config: dict | None = None) -> list[type[LyricsModule]]:
 
 def get_plugin_for_url(
     plugins: list[type[LyricsModule]],
-    url: str
+    query: TrackQuery | str,
 ) -> type[LyricsModule] | None:
-    """Find the first plugin that matches the given URL.
+    """Find the plugin whose URL regex matches the query URL.
 
-    Plugins are checked in the resolved order.
-
-    Args:
-        plugins: List of plugin classes to check.
-        url: URL to match against.
-
-    Returns:
-        First matching plugin class, or None if no match.
+    SEARCH overrides of matches() are ignored so a metadata plugin cannot
+    steal a host URL.
     """
+    if isinstance(query, str):
+        query = TrackQuery(url=query)
+    if not query.url:
+        return None
     for plugin_cls in plugins:
-        if plugin_cls.matches(url):
-            logger.debug(f"URL matched by plugin: {plugin_cls.META.name}")
+        regex = plugin_cls.META.regex
+        if regex is not None and regex.search(query.url):
+            logger.debug("URL matched by plugin: %s", plugin_cls.META.name)
+            return plugin_cls
+    return None
+
+
+def get_plugin_by_id(
+    plugins: list[type[LyricsModule]],
+    plugin_id: str,
+) -> type[LyricsModule] | None:
+    """Return the plugin with the given id, or None."""
+    for plugin_cls in plugins:
+        if plugin_cls.META.id == plugin_id:
             return plugin_cls
     return None

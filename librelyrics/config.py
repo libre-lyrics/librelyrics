@@ -43,9 +43,11 @@ def get_default_config() -> dict:
         'album_folder_name': '{name} - {artists}',
         'play_folder_name': '{name} - {owner}',
         'file_name': '{track_number}. {name}',
-        'synced_lyrics': True,
-        'enhanced_lrc': True,  # Use Enhanced LRC format for rich synced lyrics
         'force_download': False,
+        'preferred_lyrics_order': ['RICH', 'SYNCED', 'UNSYNCED'],
+        'search_priority': [],
+        'max_search_attempts': 5,
+        'max_concurrent_tracks': 4,
         'plugins': {},  # Plugin-specific configs go here
     }
 
@@ -155,17 +157,12 @@ class ConfigManager:
             Merged configuration dictionary for the plugin.
         """
         plugin_name = plugin_cls.META.name.lower()
-
-        # Get plugin's default config
         defaults = plugin_cls.default_config()
-
-        # Get stored plugin config
         plugins_config = self._config.get('plugins', {})
         stored = plugins_config.get(plugin_name, {})
-
-        # Merge: stored values override defaults
+        if not stored:
+            stored = plugins_config.get(plugin_cls.META.id, {})
         merged = {**defaults, **stored}
-
         return merged
 
     def merge_plugin_defaults(
@@ -190,19 +187,18 @@ class ConfigManager:
             modified = True
 
         for plugin_cls in plugins:
-            plugin_name = plugin_cls.META.name.lower()
+            plugin_key = plugin_cls.META.name.lower()
             defaults = plugin_cls.default_config()
 
             if not defaults:
                 continue
 
-            if plugin_name not in self._config['plugins']:
-                self._config['plugins'][plugin_name] = defaults
-                logger.debug(f"Added default config for plugin: {plugin_name}")
+            if plugin_key not in self._config['plugins']:
+                self._config['plugins'][plugin_key] = defaults
+                logger.debug(f"Added default config for plugin: {plugin_key}")
                 modified = True
             else:
-                # Merge missing keys
-                stored = self._config['plugins'][plugin_name]
+                stored = self._config['plugins'][plugin_key]
                 for key, value in defaults.items():
                     if key not in stored:
                         stored[key] = value
