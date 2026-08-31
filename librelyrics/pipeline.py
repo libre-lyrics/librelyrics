@@ -440,11 +440,14 @@ def collect_track_failures(
     if failures_from_callback:
         return failures_from_callback
 
-    fetched_titles = {response.title for response in responses}
+    from collections import Counter
+
+    fetched = Counter(response.title for response in responses)
     missing: list[TrackFetchFailure] = []
     for track in tracks:
-        if track.title and track.title not in fetched_titles:
-            missing.append(
-                TrackFetchFailure(track=track, reason="Lyrics not found"),
-            )
+        if track.title and fetched[track.title] > 0:
+            fetched[track.title] -= 1
+            continue
+        if track.title:
+            missing.append(TrackFetchFailure(track=track, reason="Lyrics not found"))
     return missing
