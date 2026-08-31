@@ -49,7 +49,12 @@ class LibreLyrics:
             verbose: Enable verbose logging.
             plugins: Optional plugin list (tests). Loads from disk when omitted.
         """
-        setup_logging(verbose=verbose)
+        if verbose:
+            from librelyrics.ui import console as rich_console
+
+            setup_logging(verbose=True, console=rich_console)
+        else:
+            setup_logging(verbose=False)
 
         self.config_manager = ConfigManager(config)
         if plugins is None:
@@ -103,6 +108,7 @@ class LibreLyrics:
         *,
         direct: bool = False,
         from_plugin: str | None = None,
+        on_track=None,
     ) -> list[LyricsResponse]:
         """Fetch lyrics for multiple tracks (album/playlist) or one track URL."""
         return fetch_batch_query(
@@ -111,6 +117,7 @@ class LibreLyrics:
             self.config_manager,
             direct=direct,
             from_plugin=from_plugin,
+            on_track=on_track,
         )
 
     def list_plugins(self) -> list[type[LyricsModule]]:

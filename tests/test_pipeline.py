@@ -5,8 +5,13 @@ from librelyrics.exceptions import (
     LyricsNotFound,
     UnknownPluginError,
 )
+from librelyrics.exceptions import LyricsNotFound, ProviderError
 from librelyrics.models import TrackQuery
-from librelyrics.pipeline import fetch_batch_query, fetch_query
+from librelyrics.pipeline import (
+    fetch_batch_query,
+    fetch_query,
+    normalize_failure_reason,
+)
 from librelyrics.quality import is_good_enough, plugin_can_satisfy
 from tests.fakes import AlbumFetchOnly, PlainOnly, SearchAlpha, SearchBeta, UrlPlugin
 
@@ -240,3 +245,36 @@ def test_search_not_found_raises() -> None:
         raise AssertionError("expected LyricsNotFound")
     except LyricsNotFound:
         pass
+
+
+def test_normalize_failure_reason_spotify_429() -> None:
+    exc = ProviderError("Spotify search failed: HTTP 429")
+    assert normalize_failure_reason(exc) == "Spotify HTTP 429"
+
+
+def test_normalize_failure_reason_lyrics_not_found() -> None:
+    assert normalize_failure_reason(LyricsNotFound("none")) == "Lyrics not found"
+
+
+def test_batch_on_track_callback_reports_failures() -> None:
+    events: list[tuple[str | None, str | None]] = []
+
+    class FailSecond(SearchAlpha):
+        def fetch(self):
+            if self.query.title == "Two":
+                raise ProviderError("Spotify search failed: HTTP 429")
+            return super().fetch()
+
+    def on_track(track: TrackQuery, response, reason) -> None:
+        events.append((track.title, reason))
+
+    responses = fetch_batch_query(
+        TrackQuery(url="https://example.com/album/1"),
+        [UrlPlugin, FailSecond],
+        _cm(search_priority=["alpha"]),
+        on_track=on_track,
+    )
+    assert len(responses) == 1
+    assert responses[0].title == "One"
+    assert ("One", None) in events
+    assert ("Two", "Spotify HTTP 429") in events

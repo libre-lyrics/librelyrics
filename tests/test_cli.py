@@ -53,3 +53,32 @@ def test_normalize_strips_powershell_backslash() -> None:
         "https://open.spotify.com/album/2S8ZSnpmlReMfteHNp3zju"
     )
     assert _normalize_cli_url(None) is None
+
+
+def test_logo_prints_ascii_art() -> None:
+    import io
+
+    from rich.console import Console
+
+    from librelyrics import ui as ui_module
+    from librelyrics.ui import print_logo
+
+    buffer = io.StringIO()
+    original = ui_module.console
+    ui_module.console = Console(file=buffer, width=120)
+    try:
+        print_logo()
+        output = buffer.getvalue()
+    finally:
+        ui_module.console = original
+
+    assert "_     _ _" in output
+    assert "|___|" in output
+
+
+def test_plugin_display_name_uses_meta_name() -> None:
+    from librelyrics.cli import _plugin_display_name
+    from tests.fakes import SearchAlpha
+
+    assert _plugin_display_name([SearchAlpha], "alpha") == "Alpha"
+    assert _plugin_display_name([SearchAlpha], "missing") == "missing"

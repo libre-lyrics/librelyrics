@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import logging
+import re
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
 from librelyrics.config import ConfigManager
 from librelyrics.exceptions import (
@@ -13,6 +15,7 @@ from librelyrics.exceptions import (
     MissingMetadataError,
     NoMatchingModuleError,
     ProviderError,
+    RateLimitError,
     UnknownPluginError,
 )
 from librelyrics.models import LyricsResponse, TrackQuery
@@ -27,6 +30,47 @@ from librelyrics.registry import get_plugin_by_id, get_plugin_for_url
 from librelyrics.search_query import search_query_variants
 
 logger = logging.getLogger("librelyrics.pipeline")
+
+TrackCallback = Callable[[TrackQuery, LyricsResponse | None, str | None], None]
+
+
+@dataclass(frozen=True)
+class TrackFetchFailure:
+    """A track that could not be fetched, with a normalized reason."""
+
+    track: TrackQuery
+    reason: str
+
+    @property
+    def label(self) -> str:
+        artist = self.track.artist or "Unknown"
+        title = self.track.title or "Unknown"
+        return f"{artist} - {title}"
+
+
+def normalize_failure_reason(exc: Exception) -> str:
+    """Map provider exceptions to short, groupable reason labels."""
+    if isinstance(exc, RateLimitError):
+        return "Rate limited (HTTP 429)"
+    if isinstance(exc, LyricsNotFound):
+        return "Lyrics not found"
+
+    message = str(exc).strip()
+    if not message:
+        return "Unknown error"
+
+    http_match = re.search(r"HTTP\s+(\d{3})", message, re.IGNORECASE)
+    if http_match:
+        code = http_match.group(1)
+        provider_match = re.match(r"^([A-Za-z]+)", message)
+        if provider_match:
+            return f"{provider_match.group(1)} HTTP {code}"
+        return f"HTTP {code}"
+
+    if " failed:" in message:
+        return message.split(" failed:", 1)[1].strip()
+
+    return message
 
 
 def _search_priority_ids(config_manager: ConfigManager) -> list[str]:
@@ -88,6 +132,7 @@ def fetch_batch_query(
     *,
     direct: bool = False,
     from_plugin: str | None = None,
+    on_track: TrackCallback | None = None,
 ) -> list[LyricsResponse]:
     if not query.url:
         return [fetch_query(
@@ -134,7 +179,8 @@ def fetch_batch_query(
                 ", ".join(priority),
             )
             return _fetch_tracks_concurrent(
-                tracks, plugins, config_manager, from_plugin=from_plugin,
+                tracks, plugins, config_manager,
+                from_plugin=from_plugin, on_track=on_track,
             )
         try:
             tracks = plugin.list_tracks()
@@ -143,7 +189,8 @@ def fetch_batch_query(
                 return plugin.fetch_album()
             return plugin.fetch_playlist()
         return _fetch_tracks_concurrent(
-            tracks, plugins, config_manager, from_plugin=from_plugin,
+            tracks, plugins, config_manager,
+            from_plugin=from_plugin, on_track=on_track,
         )
 
     return [fetch_query(
@@ -205,11 +252,11 @@ def _try_search_plugin(
             return plugin.fetch_with_retry()
         except LyricsNotFound as exc:
             last_error = exc
-            logger.info("%s: %s", plugin_cls.META.name, exc)
+            logger.debug("%s: %s", plugin_cls.META.name, exc)
             continue
         except ProviderError as exc:
             last_error = exc
-            logger.info("%s failed: %s", plugin_cls.META.name, exc)
+            logger.debug("%s failed: %s", plugin_cls.META.name, exc)
             continue
     if last_error is not None:
         raise last_error
@@ -262,6 +309,7 @@ def _search_loop(
     fallback: LyricsResponse | None = None
     fallback_key: tuple[int, int] | None = None
     last_resort: LyricsResponse | None = None
+    last_provider_error: ProviderError | None = None
 
     for plugin_id in priority:
         plugin_cls = get_plugin_by_id(plugins, plugin_id)
@@ -280,13 +328,14 @@ def _search_loop(
         try:
             result = _try_search_plugin(plugin_cls, search_query, config_manager)
         except LyricsNotFound as exc:
-            logger.info("%s: %s", plugin_cls.META.name, exc)
+            logger.debug("%s: %s", plugin_cls.META.name, exc)
             continue
         except ConfigurationError as exc:
             logger.warning("Skip %s: %s", plugin_id, exc)
             continue
         except ProviderError as exc:
-            logger.info("%s failed: %s", plugin_cls.META.name, exc)
+            last_provider_error = exc
+            logger.debug("%s failed: %s", plugin_cls.META.name, exc)
             continue
 
         last_resort = result
@@ -302,6 +351,8 @@ def _search_loop(
         return fallback
     if last_resort is not None:
         return last_resort
+    if last_provider_error is not None:
+        raise last_provider_error
     raise LyricsNotFound("Lyrics not found")
 
 
@@ -311,17 +362,24 @@ def _fetch_tracks_concurrent(
     config_manager: ConfigManager,
     *,
     from_plugin: str | None,
+    on_track: TrackCallback | None = None,
 ) -> list[LyricsResponse]:
     workers = max(1, int(config_manager.get("max_concurrent_tracks") or 4))
     results: list[LyricsResponse | None] = [None] * len(tracks)
 
     def _one(index: int, track: TrackQuery) -> tuple[int, LyricsResponse | None]:
         try:
-            return index, fetch_query(
+            response = fetch_query(
                 track, plugins, config_manager, from_plugin=from_plugin,
             )
-        except LyricsNotFound:
-            logger.warning("No lyrics for %s - %s", track.artist, track.title)
+            if on_track is not None:
+                on_track(track, response, None)
+            return index, response
+        except (LyricsNotFound, ProviderError) as exc:
+            reason = normalize_failure_reason(exc)
+            logger.debug("No lyrics for %s - %s: %s", track.artist, track.title, reason)
+            if on_track is not None:
+                on_track(track, None, reason)
             return index, None
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -331,3 +389,22 @@ def _fetch_tracks_concurrent(
             results[index] = response
 
     return [item for item in results if item is not None]
+
+
+def collect_track_failures(
+    tracks: list[TrackQuery],
+    responses: list[LyricsResponse],
+    failures_from_callback: list[TrackFetchFailure],
+) -> list[TrackFetchFailure]:
+    """Build failure list when callback-tracked failures are unavailable."""
+    if failures_from_callback:
+        return failures_from_callback
+
+    fetched_titles = {response.title for response in responses}
+    missing: list[TrackFetchFailure] = []
+    for track in tracks:
+        if track.title and track.title not in fetched_titles:
+            missing.append(
+                TrackFetchFailure(track=track, reason="Lyrics not found"),
+            )
+    return missing
