@@ -1,11 +1,14 @@
+import pytest
+
 from librelyrics.config import ConfigManager, get_default_config
 from librelyrics.exceptions import (
     ConfigurationError,
     DirectModeError,
     LyricsNotFound,
+    NoMatchingModuleError,
+    ProviderError,
     UnknownPluginError,
 )
-from librelyrics.exceptions import LyricsNotFound, ProviderError
 from librelyrics.models import TrackQuery
 from librelyrics.pipeline import (
     fetch_batch_query,
@@ -278,3 +281,48 @@ def test_batch_on_track_callback_reports_failures() -> None:
     assert responses[0].title == "One"
     assert ("One", None) in events
     assert ("Two", "Spotify HTTP 429") in events
+
+
+def test_fetch_batch_on_phase_reports_listing_and_fetching() -> None:
+    phases: list[str] = []
+
+    fetch_batch_query(
+        TrackQuery(url="https://example.com/album/1"),
+        [UrlPlugin],
+        _cm(search_priority=["urlplug"]),
+        on_phase=phases.append,
+    )
+    assert phases == ["listing", "fetching"]
+
+
+def test_unknown_url_with_search_priority_raises_no_matching() -> None:
+    with pytest.raises(NoMatchingModuleError):
+        fetch_query(
+            TrackQuery(url="https://example.com/foo"),
+            PLUGINS,
+            _cm(search_priority=["alpha"]),
+        )
+
+
+def test_spotify_and_apple_music_classify_url() -> None:
+    from applemusic.module import AppleMusicModule
+    from spotify.module import SpotifyModule
+
+    assert AppleMusicModule.classify_url(
+        "https://music.apple.com/us/album/thinking-out-loud/1440871909?i=1440872388"
+    ) == "track"
+    assert AppleMusicModule.classify_url(
+        "https://music.apple.com/us/album/x-deluxe-edition/1440871909"
+    ) == "album"
+    assert SpotifyModule.classify_url("https://open.spotify.com/track/abc") == "track"
+    assert SpotifyModule.classify_url("https://open.spotify.com/album/abc") == "album"
+    assert SpotifyModule.classify_url("https://open.spotify.com/playlist/abc") == "playlist"
+
+
+def test_search_keeps_resolved_album_on_response() -> None:
+    result = fetch_query(
+        TrackQuery(url=URL),
+        PLUGINS,
+        _cm(search_priority=["alpha"]),
+    )
+    assert result.album == "Resolved Album"

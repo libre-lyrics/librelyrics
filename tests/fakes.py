@@ -80,6 +80,15 @@ class UrlPlugin(LyricsModule):
             return super().matches(query)
         return bool(query.artist and query.title)
 
+    @classmethod
+    def classify_url(cls, url: str | None) -> str | None:
+        if not url:
+            return None
+        match = cls.META.regex.search(url)
+        if not match:
+            return None
+        return match.group(1)
+
 
 class SearchAlpha(LyricsModule):
     META = ModuleMeta(

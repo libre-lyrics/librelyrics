@@ -5,11 +5,9 @@ for fetching lyrics using the plugin system.
 """
 from __future__ import annotations
 
-import os
 import re
 
 from librelyrics.config import ConfigManager
-from librelyrics.exceptions import LyricsNotFound, NoMatchingModuleError
 from librelyrics.logging_config import get_logger, setup_logging
 from librelyrics.models import LyricsResponse, TrackQuery
 from librelyrics.modules.base import LyricsModule
@@ -109,6 +107,7 @@ class LibreLyrics:
         direct: bool = False,
         from_plugin: str | None = None,
         on_track=None,
+        on_phase=None,
     ) -> list[LyricsResponse]:
         """Fetch lyrics for multiple tracks (album/playlist) or one track URL."""
         return fetch_batch_query(
@@ -118,6 +117,7 @@ class LibreLyrics:
             direct=direct,
             from_plugin=from_plugin,
             on_track=on_track,
+            on_phase=on_phase,
         )
 
     def list_plugins(self) -> list[type[LyricsModule]]:
@@ -146,118 +146,4 @@ def rename_using_format(template: str, data: dict) -> str:
         value = str(data.get(match, ''))
         result = result.replace(placeholder, value)
     return re.sub(r'[\\/*?:"<>|]', "", result)
-
-
-def save_lyrics(lyrics: str, path: str) -> None:
-    """Save lyrics to a file.
-
-    Args:
-        lyrics: Lyrics content to save.
-        path: File path to save to.
-    """
-    os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
-    with open(path, "w+", encoding='utf-8') as f:
-        f.write(lyrics)
-    logger.debug(f"Saved lyrics to: {path}")
-
-
-def download_lyrics(
-    librelyrics: LibreLyrics,
-    url: str,
-    folder: str | None = None,
-) -> tuple[list[str], list[str]]:
-    """Download lyrics for a URL (track, album, or playlist).
-
-    Args:
-        librelyrics: LibreLyrics instance.
-        url: URL to download lyrics from.
-        folder: Optional output folder name.
-
-    Returns:
-        Tuple of (successful_tracks, failed_tracks).
-    """
-    config = librelyrics.config
-    download_path = config.get('download_path', 'downloads')
-
-    if folder:
-        output_dir = os.path.join(download_path, folder)
-    else:
-        output_dir = download_path
-
-    # Check if we should skip existing
-    if folder and config.get('create_folder') and not config.get('force_download'):
-        if os.path.exists(output_dir):
-            logger.info("The album/playlist was already downloaded, skipping")
-            return [], []
-
-    os.makedirs(output_dir, exist_ok=True)
-
-    successful: list[str] = []
-    failed: list[str] = []
-
-    try:
-        responses = librelyrics.fetch_batch(url)
-
-        for response in responses:
-            try:
-                file_data = {
-                    'name': response.title,
-                    'artist': response.artist,
-                    'album_name': response.album or '',
-                    'track_number': str(response.metadata.get('track_number', 0)).zfill(2),
-                    'explicit': '[E]' if response.metadata.get('explicit') else '',
-                }
-
-                file_name = rename_using_format(
-                    config.get('file_name', '{track_number}. {name}'),
-                    file_data
-                )
-                file_path = os.path.join(output_dir, f"{file_name}.lrc")
-
-                # Skip if exists and not forcing
-                if os.path.exists(file_path) and not config.get('force_download'):
-                    logger.debug(f"Skipping existing: {file_path}")
-                    continue
-
-                lrc_content = response.to_lrc()
-                save_lyrics(lrc_content, file_path)
-                successful.append(response.title)
-
-            except Exception as e:
-                logger.warning(f"Failed to save lyrics for {response.title}: {e}")
-                failed.append(response.title)
-
-    except NoMatchingModuleError as e:
-        logger.error(str(e))
-        return [], [url]
-    except LyricsNotFound as e:
-        logger.warning(str(e))
-        return [], [url]
-
-    return successful, failed
-
-
-def fetch_files_lyrics(
-    librelyrics: LibreLyrics,
-    path: str,
-) -> tuple[list[str], list[str]]:
-    """Fetch lyrics for music files in a directory.
-
-    Note: This feature requires search functionality which is not available
-    with the Partner API. Use track URLs directly instead.
-
-    Args:
-        librelyrics: LibreLyrics instance.
-        path: Path to directory containing music files.
-
-    Returns:
-        Tuple of (successful_tracks, failed_tracks).
-
-    Raises:
-        NotImplementedError: Search not available with Partner API.
-    """
-    raise NotImplementedError(
-        "File scanning requires search functionality which is not available with the Partner API. "
-        "Please use track/album/playlist URLs directly instead."
-    )
 

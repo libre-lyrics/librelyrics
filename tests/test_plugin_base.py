@@ -76,3 +76,9 @@ def test_default_fetch_album_uses_list_tracks() -> None:
 
 def test_resolve_capability_flag_exists() -> None:
     assert ModuleCapability.RESOLVE
+
+
+def test_url_plugin_classify_url() -> None:
+    assert UrlPlugin.classify_url("https://example.com/track/1") == "track"
+    assert UrlPlugin.classify_url("https://example.com/album/1") == "album"
+    assert UrlPlugin.classify_url("https://example.com/playlist/1") == "playlist"

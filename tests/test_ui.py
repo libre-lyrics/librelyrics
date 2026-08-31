@@ -25,7 +25,31 @@ def test_format_grouped_reasons_orders_by_frequency() -> None:
     assert text == "HTTP 429 x 46 · Lyrics not found x 3"
 
 
-def test_print_fetch_summary_truncates_failed_list(capsys) -> None:
+def test_print_fetch_summary_infers_failures_from_total(capsys) -> None:
+    """When total_tracks exceeds saved+skipped, inferred failure count is shown."""
+    summary = FetchSummary(
+        successful=["A"],
+        failed=[],
+        skipped=[],
+        download_path="downloads",
+        total_tracks=5,
+    )
+    console = Console(file=__import__("io").StringIO(), width=120)
+    from librelyrics import ui as ui_module
+
+    original = ui_module.console
+    ui_module.console = console
+    try:
+        print_fetch_summary(summary, verbose=False)
+        output = console.file.getvalue()
+    finally:
+        ui_module.console = original
+
+    assert "Failed" in output
+    assert "4" in output
+
+
+def test_print_fetch_summary_truncates_failed_list() -> None:
     failures = [(f"Track {index}", "HTTP 429") for index in range(8)]
     summary = FetchSummary(
         successful=[],

@@ -61,10 +61,10 @@ class LyricsResponse:
         lines = []
 
         if include_metadata:
-            lines.append(f'[ti:{self.title}]')
+            lines.append(f'[ti:{_escape_lrc_tag(self.title)}]')
             if self.album:
-                lines.append(f'[al:{self.album}]')
-            lines.append(f'[ar:{self.artist}]')
+                lines.append(f'[al:{_escape_lrc_tag(self.album)}]')
+            lines.append(f'[ar:{_escape_lrc_tag(self.artist)}]')
             if self.duration_ms:
                 minutes, seconds = divmod(self.duration_ms / 1000, 60)
                 lines.append(f'[length:{minutes:0>2.0f}:{seconds:05.2f}]')
@@ -87,3 +87,9 @@ class LyricsResponse:
                 lines.append(line.text)
 
         return '\n'.join(lines)
+
+
+def _escape_lrc_tag(value: str) -> str:
+    """Keep LRC metadata tags parseable as a single ``[id:value]`` field.
+    """
+    return value.replace("[", "(").replace("]", ")")

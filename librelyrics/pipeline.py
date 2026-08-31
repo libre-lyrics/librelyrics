@@ -32,6 +32,7 @@ from librelyrics.search_query import search_query_variants
 logger = logging.getLogger("librelyrics.pipeline")
 
 TrackCallback = Callable[[TrackQuery, LyricsResponse | None, str | None], None]
+PhaseCallback = Callable[[str], None]
 
 
 @dataclass(frozen=True)
@@ -71,6 +72,13 @@ def normalize_failure_reason(exc: Exception) -> str:
         return message.split(" failed:", 1)[1].strip()
 
     return message
+
+
+def apply_query_metadata(query: TrackQuery, response: LyricsResponse) -> LyricsResponse:
+    """Prefer resolved/CLI album so LRC tags match the URL source folder."""
+    if query.album:
+        response.album = query.album
+    return response
 
 
 def _search_priority_ids(config_manager: ConfigManager) -> list[str]:
@@ -119,10 +127,12 @@ def fetch_query(
     if direct and from_plugin:
         raise ConfigurationError("--direct and --from cannot be used together")
     if direct:
-        return _fetch_direct(query, plugins, config_manager)
-    if from_plugin:
-        return _fetch_from(query, plugins, config_manager, from_plugin)
-    return _fetch_default(query, plugins, config_manager)
+        response = _fetch_direct(query, plugins, config_manager)
+    elif from_plugin:
+        response = _fetch_from(query, plugins, config_manager, from_plugin)
+    else:
+        response = _fetch_default(query, plugins, config_manager)
+    return apply_query_metadata(query, response)
 
 
 def fetch_batch_query(
@@ -133,6 +143,7 @@ def fetch_batch_query(
     direct: bool = False,
     from_plugin: str | None = None,
     on_track: TrackCallback | None = None,
+    on_phase: PhaseCallback | None = None,
 ) -> list[LyricsResponse]:
     if not query.url:
         return [fetch_query(
@@ -146,10 +157,10 @@ def fetch_batch_query(
         )
 
     plugin = plugin_cls(query, config_manager.for_plugin(plugin_cls))
-    url_l = query.url.lower()
-    is_album = plugin_cls.has_capability(ModuleCapability.ALBUM) and "album" in url_l
+    kind = plugin_cls.classify_url(query.url)
+    is_album = plugin_cls.has_capability(ModuleCapability.ALBUM) and kind == "album"
     is_playlist = (
-        plugin_cls.has_capability(ModuleCapability.PLAYLIST) and "playlist" in url_l
+        plugin_cls.has_capability(ModuleCapability.PLAYLIST) and kind == "playlist"
     )
     priority = _search_priority_ids(config_manager)
     logger.debug("search_priority=%s", priority)
@@ -164,6 +175,8 @@ def fetch_batch_query(
     if is_album or is_playlist:
         if priority:
             try:
+                if on_phase is not None:
+                    on_phase("listing")
                 tracks = plugin.list_tracks()
             except NotImplementedError as exc:
                 kind = "album" if is_album else "playlist"
@@ -178,16 +191,22 @@ def fetch_batch_query(
                 len(tracks),
                 ", ".join(priority),
             )
+            if on_phase is not None:
+                on_phase("fetching")
             return _fetch_tracks_concurrent(
                 tracks, plugins, config_manager,
                 from_plugin=from_plugin, on_track=on_track,
             )
         try:
+            if on_phase is not None:
+                on_phase("listing")
             tracks = plugin.list_tracks()
         except NotImplementedError:
             if is_album:
                 return plugin.fetch_album()
             return plugin.fetch_playlist()
+        if on_phase is not None:
+            on_phase("fetching")
         return _fetch_tracks_concurrent(
             tracks, plugins, config_manager,
             from_plugin=from_plugin, on_track=on_track,
@@ -230,7 +249,9 @@ def _fetch_from(
         )
     if not plugin_cls.has_capability(ModuleCapability.SEARCH):
         raise UnknownPluginError(f"Plugin '{plugin_id}' does not support SEARCH")
-    return _try_search_plugin(plugin_cls, query, config_manager)
+    return apply_query_metadata(
+        query, _try_search_plugin(plugin_cls, query, config_manager),
+    )
 
 
 def _try_search_plugin(
@@ -269,12 +290,19 @@ def _fetch_default(
     config_manager: ConfigManager,
 ) -> LyricsResponse:
     query = resolve_query(query, plugins, config_manager)
+    if query.url and get_plugin_for_url(plugins, query) is None:
+        if not (query.artist and query.title):
+            raise NoMatchingModuleError(
+                f"No plugin found that can handle URL: {query.url}"
+            )
     priority = _search_priority_ids(config_manager)
     logger.debug("search_priority=%s", priority)
 
     if priority:
         logger.debug("Searching lyrics via %s", ", ".join(priority))
-        return _search_loop(query, plugins, config_manager, priority)
+        return apply_query_metadata(
+            query, _search_loop(query, plugins, config_manager, priority),
+        )
 
     if query.url:
         plugin_cls = get_plugin_for_url(plugins, query)
@@ -283,7 +311,7 @@ def _fetch_default(
                 f"No plugin found that can handle URL: {query.url}"
             )
         plugin = plugin_cls(query, config_manager.for_plugin(plugin_cls))
-        return plugin.fetch_with_retry()
+        return apply_query_metadata(query, plugin.fetch_with_retry())
 
     search_plugins = [
         p for p in plugins if p.has_capability(ModuleCapability.SEARCH)
@@ -291,8 +319,9 @@ def _fetch_default(
     search_plugins.sort(key=lambda p: p.META.id)
     if not search_plugins:
         raise LyricsNotFound("No search plugin available for artist and title")
-    return _search_loop(
-        query, plugins, config_manager, [search_plugins[0].META.id],
+    return apply_query_metadata(
+        query,
+        _search_loop(query, plugins, config_manager, [search_plugins[0].META.id]),
     )
 
 
@@ -375,9 +404,20 @@ def _fetch_tracks_concurrent(
             if on_track is not None:
                 on_track(track, response, None)
             return index, response
-        except (LyricsNotFound, ProviderError) as exc:
+        except (LyricsNotFound, ProviderError, ConfigurationError, UnknownPluginError) as exc:
             reason = normalize_failure_reason(exc)
             logger.debug("No lyrics for %s - %s: %s", track.artist, track.title, reason)
+            if on_track is not None:
+                on_track(track, None, reason)
+            return index, None
+        except Exception as exc:
+            reason = normalize_failure_reason(exc)
+            logger.warning(
+                "Unexpected error for %s - %s: %s",
+                track.artist,
+                track.title,
+                reason,
+            )
             if on_track is not None:
                 on_track(track, None, reason)
             return index, None

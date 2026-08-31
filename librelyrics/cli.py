@@ -9,19 +9,18 @@ Modern CLI powered by Typer with:
 """
 from __future__ import annotations
 
-import io
 import os
 import re
 import sys
-from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from typing import Annotated, Optional
 
 import questionary
 import typer
+from rich.status import Status
 
 from librelyrics import __version__
 from librelyrics.config import ConfigManager, get_config_path, get_default_config
-from librelyrics.core import LibreLyrics, fetch_files_lyrics
+from librelyrics.core import LibreLyrics
 from librelyrics.exceptions import (
     ConfigurationError,
     DirectModeError,
@@ -33,7 +32,6 @@ from librelyrics.exceptions import (
 )
 from librelyrics.logging_config import setup_logging
 from librelyrics.models import TrackQuery
-from librelyrics.modules.base import ModuleCapability
 from librelyrics.plugin_manager import install_plugin, list_plugins, remove_plugin
 from librelyrics.registry import get_plugin_by_id, get_plugin_for_url, load_all_plugins
 from librelyrics.ui import (
@@ -42,7 +40,6 @@ from librelyrics.ui import (
     create_progress,
     format_progress_description,
     print_config_table,
-    print_download_summary,
     print_error,
     print_fetch_summary,
     print_info,
@@ -222,13 +219,13 @@ def config_set(
             current[part] = {}
         current = current[part]
 
-    # Convert value types
+    # Convert value types. Keep digit-only plugin secrets as strings.
     converted: str | bool | int = value
     if value.lower() == 'true':
         converted = True
     elif value.lower() == 'false':
         converted = False
-    elif value.isdigit():
+    elif parts[-1] in {"max_search_attempts", "max_concurrent_tracks"} and value.isdigit():
         converted = int(value)
 
     current[parts[-1]] = converted
@@ -527,17 +524,20 @@ def handle_fetch(
         librelyrics.config['force_download'] = True
 
     if url and os.path.isdir(url):
-        return handle_local_files(librelyrics, url, verbose=verbose)
+        print_error(
+            "Local directory scanning is not supported yet. "
+            "Use track, album, or playlist URLs instead."
+        )
+        return 1
 
     query = TrackQuery(url=url, artist=artist, title=title, album=album)
-    is_batch = bool(
-        url and ('album' in url.lower() or 'playlist' in url.lower())
-    )
+    plugin_cls = get_plugin_for_url(librelyrics.plugins, query) if url else None
+    url_kind = plugin_cls.classify_url(url) if plugin_cls and url else None
+    is_batch = url_kind in {"album", "playlist"}
 
     folder_name = None
     total_tracks = None
     session_header: dict | None = None
-    plugin_cls = get_plugin_for_url(librelyrics.plugins, query) if url else None
     priority_ids = [
         str(item).strip()
         for item in (librelyrics.config_manager.get("search_priority") or [])
@@ -553,6 +553,7 @@ def handle_fetch(
         if plugin_cls.META.requires_auth:
             try:
                 plugin_cls.validate_config(plugin_config)
+                print_success(plugin_cls.META.name, label="Ready")
             except ConfigurationError as e:
                 print_error(str(e))
                 console.print(
@@ -561,10 +562,16 @@ def handle_fetch(
                 )
                 return 1
         if is_batch:
-            plugin = plugin_cls(query, plugin_config)
-            folder_name, total_tracks, session_header = _batch_folder_and_count(
-                plugin, url or "", librelyrics.config, verbose,
+            resolve_label = (
+                f"Resolving {url_kind} with {plugin_cls.META.name}…"
+                if url_kind
+                else f"Resolving with {plugin_cls.META.name}…"
             )
+            with Status(resolve_label, console=console):
+                plugin = plugin_cls(query, plugin_config)
+                folder_name, total_tracks, session_header = _batch_folder_and_count(
+                    plugin, url or "", librelyrics.config, verbose,
+                )
 
     if session_header:
         print_session_header(
@@ -580,9 +587,26 @@ def handle_fetch(
 
             with create_progress() as progress:
                 fetch_task = progress.add_task(
-                    format_progress_description("Fetching"),
+                    format_progress_description("Loading track list"),
                     total=total_tracks,
                 )
+
+                def _on_phase(phase: str) -> None:
+                    if phase == "listing":
+                        progress.update(
+                            fetch_task,
+                            description=format_progress_description("Loading track list"),
+                        )
+                    elif phase == "fetching":
+                        if search_plugins:
+                            hint = ", ".join(search_plugins)
+                            action = f"Searching via {hint}"
+                        else:
+                            action = "Fetching lyrics"
+                        progress.update(
+                            fetch_task,
+                            description=format_progress_description(action),
+                        )
 
                 def _on_track(track, response, reason) -> None:
                     nonlocal completed
@@ -602,6 +626,7 @@ def handle_fetch(
                     direct=direct,
                     from_plugin=from_plugin,
                     on_track=_on_track,
+                    on_phase=_on_phase,
                 )
 
                 if total_tracks is None:
@@ -612,6 +637,11 @@ def handle_fetch(
                     librelyrics.config,
                     folder_name,
                     progress=progress,
+                    album_tag=(
+                        session_header.get("title")
+                        if session_header and session_header.get("kind") == "album"
+                        else None
+                    ),
                 )
 
             all_failed = fetch_failures + [
@@ -627,7 +657,7 @@ def handle_fetch(
                 ),
                 verbose=verbose,
             )
-            return 0 if successful else 1
+            return _save_exit_code(successful, skipped, all_failed)
 
         with create_progress() as progress:
             fetch_task = progress.add_task(format_progress_description("Fetching"), total=1)
@@ -669,7 +699,11 @@ def handle_fetch(
             verbose=verbose,
         )
 
-        return 0 if successful else 1
+        return _save_exit_code(
+            successful,
+            skipped,
+            [(title, "Save failed") for title in save_failed],
+        )
 
     except DirectModeError as e:
         print_error(str(e))
@@ -713,7 +747,8 @@ def _batch_folder_and_count(
     total_tracks = None
     session_header: dict | None = None
     try:
-        if "album" in url.lower() and hasattr(plugin, "get_album_info"):
+        kind = type(plugin).classify_url(url)
+        if kind == "album" and hasattr(plugin, "get_album_info"):
             info = plugin.get_album_info()
             artists = ", ".join(a["name"] for a in info.get("artists", []))
             session_header = {
@@ -730,7 +765,7 @@ def _batch_folder_and_count(
                 total_tracks = int(info.get("total_tracks"))
             except (TypeError, ValueError):
                 total_tracks = None
-        elif "playlist" in url.lower() and hasattr(plugin, "get_playlist_info"):
+        elif kind == "playlist" and hasattr(plugin, "get_playlist_info"):
             info = plugin.get_playlist_info()
             owner = info.get("owner", {}).get("display_name", "Unknown")
             track_count = info.get("tracks", {}).get("total", "?")
@@ -754,158 +789,15 @@ def _batch_folder_and_count(
     return folder_name, total_tracks, session_header
 
 
-def _format_task_desc(action: str, title: str = "", max_title_len: int = 25) -> str:
-    """Format action and track title into a clean description for fixed-width progress bars."""
-    if not title:
-        return f"[cyan]{action}[/cyan]"
-    if len(title) > max_title_len:
-        title = title[: max_title_len - 3] + "..."
-    return f"[cyan]{action}: {title}[/cyan]"
-
-
-def fetch_and_save_batch(
-    plugin,
-    batch_type: str,  # 'album' or 'playlist'
-    config: dict,
-    folder_name: str | None = None,
-    verbose: bool = False,
-    total_tracks: int | str | None = None,
-) -> tuple[list[str], list[str], list[str]]:
-    """Fetch lyrics and save with a progress bar.
-
-    Args:
-        plugin: The plugin instance.
-        batch_type: 'album' or 'playlist'.
-        config: Configuration dictionary.
-        folder_name: Optional folder name for output.
-        verbose: Enable verbose output.
-        total_tracks: Total tracks count if known.
-
-    Returns:
-        Tuple of (successful_tracks, failed_tracks, skipped_tracks).
-    """
-    total_count: int | None = None
-    if total_tracks is not None:
-        try:
-            total_count = int(total_tracks)
-        except (TypeError, ValueError):
-            total_count = None
-
-    responses = []
-    fetched_count = 0
-
-    with create_progress() as progress:
-        task = progress.add_task(
-            _format_task_desc(f"Fetching {batch_type} lyrics"),
-            total=total_count,
-        )
-
-        orig_fetch_track = getattr(plugin, '_fetch_track_lyrics', None)
-
-        def _on_track_fetched(response=None):
-            nonlocal fetched_count
-            fetched_count += 1
-            title = response.title if response and hasattr(response, 'title') else ''
-            desc = _format_task_desc("Downloading", title)
-            progress.update(task, completed=fetched_count, description=desc)
-
-        if orig_fetch_track:
-            def wrapped_fetch_track(*args, **kwargs):
-                res = orig_fetch_track(*args, **kwargs)
-                _on_track_fetched(res)
-                return res
-            plugin._fetch_track_lyrics = wrapped_fetch_track
-
-        try:
-            with ExitStack() as stack:
-                if not verbose:
-                    stack.enter_context(redirect_stdout(io.StringIO()))
-                    stack.enter_context(redirect_stderr(io.StringIO()))
-                if batch_type == 'album' and plugin.has_capability(ModuleCapability.ALBUM):
-                    responses = plugin.fetch_album()
-                elif batch_type == 'playlist' and plugin.has_capability(ModuleCapability.PLAYLIST):
-                    responses = plugin.fetch_playlist()
-                else:
-                    # Fallback: try single fetch
-                    responses = [plugin.fetch()]
-        except Exception as e:
-            if verbose:
-                console.print(f"[dim]Batch fetch error: {e}[/dim]")
-            raise
-        finally:
-            if orig_fetch_track:
-                plugin._fetch_track_lyrics = orig_fetch_track
-
-        # Update total if total_count was unknown or mismatched
-        total_items = len(responses) if responses else (total_count or 0)
-        progress.update(task, total=max(total_items, fetched_count), completed=max(fetched_count, total_items))
-
-        # Setup output directory
-        download_path = config.get('download_path', 'downloads')
-        if folder_name and config.get('create_folder', True):
-            folder_name = re.sub(r'[\\/*?:"<>|]', '', folder_name)
-            download_path = os.path.join(download_path, folder_name)
-        os.makedirs(download_path, exist_ok=True)
-
-        successful = []
-        failed = []
-        skipped = []
-
-        save_task = progress.add_task(_format_task_desc("Saving lyrics"), total=len(responses))
-        for response in responses:
-            try:
-                desc = _format_task_desc("Saving", response.title)
-                progress.update(save_task, description=desc)
-
-                # Build filename
-                file_data = {
-                    'name': response.title,
-                    'artist': response.artist,
-                    'album_name': response.album or '',
-                    'track_number': str(response.metadata.get('track_number', 0)).zfill(2),
-                }
-
-                template = config.get('file_name', '{track_number}. {name}')
-                file_name = template
-                for key, value in file_data.items():
-                    file_name = file_name.replace(f'{{{key}}}', str(value))
-
-                # Sanitize filename
-                file_name = re.sub(r'[\\/*?:"<>|]', '', file_name)
-                file_path = os.path.join(download_path, f"{file_name}.lrc")
-
-                # Check if exists
-                if os.path.exists(file_path) and not config.get('force_download'):
-                    skipped.append(response.title)
-                    progress.update(save_task, advance=1)
-                    continue
-
-                # Write file with optional enhanced LRC format
-                enhanced = response.rich_synced
-                with open(file_path, 'w', encoding='utf-8') as f:
-                    f.write(response.to_lrc(enhanced=enhanced))
-
-                successful.append(response.title)
-                progress.update(save_task, advance=1)
-
-            except Exception as e:
-                failed.append(response.title if hasattr(response, 'title') else str(response))
-                progress.update(save_task, advance=1)
-                if verbose:
-                    console.print(f"[dim]Error saving: {e}[/dim]")
-
-    if successful:
-        console.print(
-            f"[success]Saved[/success]     {len(successful)} "
-            f"to [accent]{download_path}[/accent]"
-        )
-
-    return successful, failed, skipped
-
-
-def _format_task_desc(action: str, title: str = "", max_title_len: int = 25) -> str:
-    """Format action and track title for progress bars."""
-    return format_progress_description(action, title, max_title_len=max_title_len)
+def _save_exit_code(
+    successful: list[str],
+    skipped: list[str],
+    failed: list,
+) -> int:
+    """Treat skip-only runs as success; fail only when nothing was saved or skipped."""
+    if successful or skipped:
+        return 0
+    return 1
 
 
 def save_responses(
@@ -914,6 +806,7 @@ def save_responses(
     folder_name: str | None = None,
     *,
     progress=None,
+    album_tag: str | None = None,
 ) -> tuple[list[str], list[str], list[str], str]:
     """Save lyrics responses to files, optionally within an existing progress display."""
     download_path = config.get("download_path", "downloads")
@@ -927,17 +820,38 @@ def save_responses(
     successful: list[str] = []
     failed: list[str] = []
     skipped: list[str] = []
+    written_this_run: set[str] = set()
 
     if not responses:
         return successful, failed, skipped, download_path
 
+    def _unique_path(file_path: str) -> str:
+        if file_path not in written_this_run:
+            return file_path
+        stem, ext = os.path.splitext(file_path)
+        index = 2
+        candidate = f"{stem} ({index}){ext}"
+        while candidate in written_this_run or os.path.exists(candidate):
+            index += 1
+            candidate = f"{stem} ({index}){ext}"
+        return candidate
+
     def _save_one(response) -> None:
         nonlocal successful, failed, skipped
+        if album_tag:
+            response.album = album_tag
+
+        track_number = response.metadata.get("track_number")
+        if track_number in (None, "", 0, "0"):
+            track_label = ""
+        else:
+            track_label = str(track_number).zfill(2)
+
         file_data = {
             "name": response.title,
             "artist": response.artist,
             "album_name": response.album or "",
-            "track_number": str(response.metadata.get("track_number", 0)).zfill(2),
+            "track_number": track_label,
         }
 
         template = config.get("file_name", "{track_number}. {name}")
@@ -945,17 +859,25 @@ def save_responses(
         for key, value in file_data.items():
             file_name = file_name.replace(f"{{{key}}}", str(value))
 
-        file_name = re.sub(r'[\\/*?:"<>|]', "", file_name)
+        file_name = re.sub(r'[\\/*?:"<>|]', "", file_name).strip(" .")
+        if not file_name:
+            file_name = "lyrics"
         file_path = os.path.join(download_path, f"{file_name}.lrc")
 
-        if os.path.exists(file_path) and not config.get("force_download"):
+        if (
+            os.path.exists(file_path)
+            and file_path not in written_this_run
+            and not config.get("force_download")
+        ):
             skipped.append(response.title)
             return
 
+        file_path = _unique_path(file_path)
         enhanced = response.rich_synced
         with open(file_path, "w", encoding="utf-8") as handle:
             handle.write(response.to_lrc(enhanced=enhanced))
 
+        written_this_run.add(file_path)
         successful.append(response.title)
 
     if progress is not None:
@@ -992,36 +914,60 @@ def save_responses(
 
     return successful, failed, skipped, download_path
 
-
-def save_responses_interactive(
-    responses: list,
-    config: dict,
-    folder_name: str | None = None,
-) -> tuple[list[str], list[str]]:
-    """Backward-compatible save helper returning successful and failed only."""
-    successful, failed, _skipped, _path = save_responses(
-        responses, config, folder_name,
-    )
-    return successful, failed
-
-
-
-def handle_local_files(librelyrics, path: str, *, verbose: bool = False) -> int:
-    """Handle scanning local music files."""
-    console.print(f"[muted]Scanning[/muted]   {path}\n")
-
-    try:
-        successful, failed = fetch_files_lyrics(librelyrics, path)
-        print_download_summary(successful, failed)
-        return 0 if successful else 1
-    except Exception as e:
-        print_error(str(e))
-        return 1
-
-
 # ── Entry point ─────────────────────────────────────────────────
 # Known subcommands that should NOT be treated as URLs
 _SUBCOMMANDS = {"config", "plugin", "fetch", "--help", "-h"}
+
+_ROOT_OPTION_FLAGS = frozenset({"-v", "--verbose", "-f", "--force", "-V", "--version"})
+_ROOT_VALUE_FLAGS = frozenset({"-d", "--directory"})
+_FETCH_VALUE_FLAGS = frozenset({"--artist", "--title", "--album", "--from"})
+_FETCH_OPTION_FLAGS = frozenset({"--direct", "-D"})
+
+
+def _normalize_fetch_argv(args: list[str]) -> list[str]:
+    """Reorder argv for implicit fetch invocations.
+
+    Global options must precede the fetch subcommand; fetch options follow it.
+    """
+    if not args:
+        return ["fetch"]
+
+    # Real subcommands keep Typer's default parsing.
+    for arg in args:
+        if not arg.startswith("-") and arg in {"config", "plugin"}:
+            return args
+
+    root: list[str] = []
+    fetch_opts: list[str] = []
+    positionals: list[str] = []
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg in _ROOT_OPTION_FLAGS:
+            root.append(arg)
+            i += 1
+        elif arg in _ROOT_VALUE_FLAGS and i + 1 < len(args):
+            root.extend([arg, args[i + 1]])
+            i += 2
+        elif arg in _FETCH_VALUE_FLAGS and i + 1 < len(args):
+            fetch_opts.extend([arg, args[i + 1]])
+            i += 2
+        elif arg in _FETCH_OPTION_FLAGS:
+            fetch_opts.append(arg)
+            i += 1
+        elif arg == "fetch":
+            i += 1
+        elif arg.startswith("-"):
+            fetch_opts.append(arg)
+            i += 1
+        else:
+            positionals.append(arg)
+            i += 1
+
+    if positionals and positionals[0] in _SUBCOMMANDS:
+        return args
+
+    return [*root, "fetch", *fetch_opts, *positionals]
 
 
 def main() -> None:
@@ -1037,9 +983,7 @@ def main() -> None:
     # Find the first arg that isn't an option (--verbose, -d PATH, etc.)
     first_positional = None
     skip_next = False
-    value_flags = {
-        "-d", "--directory", "--artist", "--title", "--album", "--from",
-    }
+    value_flags = set(_ROOT_VALUE_FLAGS) | set(_FETCH_VALUE_FLAGS)
     for arg in args:
         if skip_next:
             skip_next = False
@@ -1052,17 +996,12 @@ def main() -> None:
         first_positional = arg
         break
 
-    # If the first positional arg isn't a subcommand, inject "fetch"
-    if first_positional and first_positional not in _SUBCOMMANDS:
-        idx = args.index(first_positional)
-        args.insert(idx, "fetch")
-        sys.argv = [sys.argv[0], *args]
-
-    # If no positional arg at all, also inject "fetch" (triggers interactive prompt)
-    if first_positional is None:
-        # check that no subcommand flag like --help was given
-        if not any(a in ("--help", "-h", "--version", "-V") for a in args):
-            sys.argv = [sys.argv[0], *args, "fetch"]
+    needs_fetch = (
+        first_positional is None
+        or first_positional not in _SUBCOMMANDS
+    )
+    if needs_fetch and not any(a in ("--help", "-h", "--version", "-V") for a in args):
+        sys.argv = [sys.argv[0], *_normalize_fetch_argv(args)]
 
     app()
 

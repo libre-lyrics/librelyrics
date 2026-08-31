@@ -206,3 +206,9 @@ config.json
 test.py
 embed.py
 .vscode
+
+# Local dev / smoke scripts (not part of the published package)
+scripts/
+
+# Local download output from manual testing
+test-downloads/

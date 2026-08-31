@@ -12,7 +12,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum, Flag, auto
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 
 from librelyrics.exceptions import LyricsNotFound, RateLimitError
 from librelyrics.models import LyricsResponse, TrackQuery
@@ -23,6 +23,8 @@ logger = logging.getLogger('librelyrics.modules.base')
 LIBRELYRICS_API_VERSION = 2
 
 PLUGIN_ID_PATTERN = re.compile(r'^[a-z0-9]+$')
+
+UrlResourceKind = Literal["track", "album", "playlist"]
 
 
 class LyricsType(Enum):
@@ -208,6 +210,29 @@ class LyricsModule(ABC):
         if query.url is None or cls.META.regex is None:
             return False
         return cls.META.regex.search(query.url) is not None
+
+    @classmethod
+    def classify_url(cls, url: str | None) -> UrlResourceKind | None:
+        """Classify a provider URL as track, album, or playlist.
+
+        Override when the service uses non-standard URL shapes (e.g. Apple Music
+        ``/album/...?i=<trackId>``). The default uses common path segments.
+        """
+        if not url or cls.META.regex is None or cls.META.regex.search(url) is None:
+            return None
+        from urllib.parse import parse_qs, urlparse
+
+        path = urlparse(url).path.lower()
+        params = parse_qs(urlparse(url).query)
+        if params.get("i") and "/album/" in path:
+            return "track"
+        if "/playlist/" in path:
+            return "playlist"
+        if "/album/" in path:
+            return "album"
+        if "/track/" in path or "/song/" in path:
+            return "track"
+        return None
 
     @classmethod
     def has_capability(cls, cap: ModuleCapability) -> bool:

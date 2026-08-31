@@ -44,6 +44,7 @@ LIBRELYRICS_THEME = Theme({
     "value": "default",
     "accent": "cyan",
     "muted": "dim",
+    "dim": "dim",
 })
 
 console = Console(file=sys.__stdout__, theme=LIBRELYRICS_THEME)
@@ -118,9 +119,9 @@ def print_session_header(
     console.print()
 
 
-def print_success(message: str) -> None:
-    """Print a success message."""
-    console.print(f"[success]Saved[/success]     {message}")
+def print_success(message: str, *, label: str = "Saved") -> None:
+    """Print a success message with an optional status label."""
+    console.print(f"[success]{label}[/success]     {message}")
 
 
 def print_error(message: str) -> None:
@@ -271,19 +272,7 @@ def print_config_table(config: dict, title: str = "Configuration") -> None:
             if isinstance(value, dict):
                 add_rows(value, full_key)
             else:
-                if (
-                    "sp_dc" in key.lower()
-                    or "token" in key.lower()
-                    or "secret" in key.lower()
-                ):
-                    display_val = (
-                        f"[muted]{'********' + str(value)[-4:]}[/muted]"
-                        if value
-                        else "[muted]<not set>[/muted]"
-                    )
-                else:
-                    display_val = str(value)
-                table.add_row(full_key, display_val)
+                table.add_row(full_key, str(value))
 
     add_rows(config)
     console.print(table)
