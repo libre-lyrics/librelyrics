@@ -11,6 +11,7 @@ from librelyrics.exceptions import (
 )
 from librelyrics.models import TrackQuery
 from librelyrics.pipeline import (
+    _search_priority_ids,
     fetch_batch_query,
     fetch_query,
     normalize_failure_reason,
@@ -302,6 +303,16 @@ def test_unknown_url_with_search_priority_raises_no_matching() -> None:
             PLUGINS,
             _cm(search_priority=["alpha"]),
         )
+
+
+def test_search_priority_accepts_comma_separated_string() -> None:
+    cm = _cm(search_priority="alpha,beta")
+    assert _search_priority_ids(cm) == ["alpha", "beta"]
+
+
+def test_search_priority_accepts_list_and_whitespace() -> None:
+    cm = _cm(search_priority=[" alpha ", "", "beta"])
+    assert _search_priority_ids(cm) == ["alpha", "beta"]
 
 
 def test_provider_specific_url_shapes_classify() -> None:

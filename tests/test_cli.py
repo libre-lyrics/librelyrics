@@ -2,6 +2,7 @@
 import sys
 
 import pytest
+from typer.exceptions import Exit as TyperExit
 from typer.testing import CliRunner
 
 from librelyrics import cli
@@ -169,6 +170,31 @@ def test_normalize_fetch_argv_metadata_only() -> None:
     assert normalized[0] == "fetch"
     assert "--artist" in normalized
     assert "--title" in normalized
+
+
+def test_normalize_fetch_argv_rejects_url_as_directory_value() -> None:
+    with pytest.raises(TyperExit) as exc:
+        _normalize_fetch_argv(["-d", "https://example.com/track/1"])
+    assert exc.value.exit_code == 2
+
+
+def test_normalize_fetch_argv_rejects_url_as_artist_value() -> None:
+
+    with pytest.raises(TyperExit) as exc:
+        _normalize_fetch_argv(["--artist", "https://example.com/track/1"])
+    assert exc.value.exit_code == 2
+
+
+def test_normalize_fetch_argv_keeps_directory_and_url() -> None:
+    normalized = _normalize_fetch_argv(
+        ["-d", "/tmp/lyrics", "https://example.com/track/1"]
+    )
+    assert normalized == [
+        "-d",
+        "/tmp/lyrics",
+        "fetch",
+        "https://example.com/track/1",
+    ]
 
 
 def test_normalize_fetch_argv_preserves_config_subcommand() -> None:

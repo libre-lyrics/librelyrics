@@ -31,6 +31,27 @@ def get_config_path() -> Path:
     return config_dir / 'config.json'
 
 
+def as_list(value: Any) -> list[str]:
+    """Normalize a config value into a list of strings.
+
+    Accepts ``None`` (→ []), a sequence, or a comma-separated string
+    (which is what ``config set`` stores for list-typed keys).
+    """
+    if value is None or value == "":
+        return []
+    if isinstance(value, str):
+        parts = value.split(",")
+    else:
+        parts = value
+    out = []
+    for item in parts:
+        piece = f"{item}"
+        piece = piece.strip()
+        if piece:
+            out.append(piece)
+    return out
+
+
 def get_default_config() -> dict:
     """Get the default configuration structure.
 

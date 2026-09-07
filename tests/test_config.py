@@ -5,9 +5,15 @@ from pathlib import Path
 
 import pytest
 
-from librelyrics.config import ConfigManager, get_default_config
+from librelyrics.config import ConfigManager, as_list, get_default_config
 from librelyrics.exceptions import CorruptedConfig
 from tests.fakes import SearchAlpha
+
+
+def test_as_list_normalizes_none_list_and_string() -> None:
+    assert as_list(None) == []
+    assert as_list("alpha,beta") == ["alpha", "beta"]
+    assert as_list([" alpha ", "", "beta"]) == ["alpha", "beta"]
 
 
 def test_get_default_config_has_expected_keys() -> None:

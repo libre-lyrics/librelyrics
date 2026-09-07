@@ -12,15 +12,20 @@ from __future__ import annotations
 import os
 import re
 import sys
-from typing import Annotated, Optional
+from typing import Annotated, NoReturn, Optional
 
 import questionary
 import typer
 from rich.status import Status
 
 from librelyrics import __version__
-from librelyrics.config import ConfigManager, get_config_path, get_default_config
-from librelyrics.core import LibreLyrics
+from librelyrics.config import (
+    ConfigManager,
+    as_list,
+    get_config_path,
+    get_default_config,
+)
+from librelyrics.core import LibreLyrics, rename_using_format
 from librelyrics.exceptions import (
     ConfigurationError,
     DirectModeError,
@@ -220,13 +225,15 @@ def config_set(
         current = current[part]
 
     # Convert value types. Keep digit-only plugin secrets as strings.
-    converted: str | bool | int = value
+    converted: str | bool | int | list[str] = value
     if value.lower() == 'true':
         converted = True
     elif value.lower() == 'false':
         converted = False
     elif parts[-1] in {"max_search_attempts", "max_concurrent_tracks"} and value.isdigit():
         converted = int(value)
+    elif parts[-1] in {"search_priority", "preferred_lyrics_order"}:
+        converted = as_list(value)
 
     current[parts[-1]] = converted
     cm.save()
@@ -444,7 +451,10 @@ def plugin_callback(ctx: typer.Context) -> None:
 def plugin_list() -> None:
     """List all plugins in resolved order."""
     config = ConfigManager().raw
-    plugins = list_plugins(config)
+    try:
+        plugins = list_plugins(config)
+    except NoPluginsFoundError:
+        plugins = []
     print_plugins_table(plugins)
 
 
@@ -538,11 +548,7 @@ def handle_fetch(
     folder_name = None
     total_tracks = None
     session_header: dict | None = None
-    priority_ids = [
-        str(item).strip()
-        for item in (librelyrics.config_manager.get("search_priority") or [])
-        if str(item).strip()
-    ]
+    priority_ids = as_list(librelyrics.config_manager.get("search_priority"))
     search_plugins = [
         _plugin_display_name(librelyrics.plugins, plugin_id)
         for plugin_id in priority_ids
@@ -855,11 +861,7 @@ def save_responses(
         }
 
         template = config.get("file_name", "{track_number}. {name}")
-        file_name = template
-        for key, value in file_data.items():
-            file_name = file_name.replace(f"{{{key}}}", str(value))
-
-        file_name = re.sub(r'[\\/*?:"<>|]', "", file_name).strip(" .")
+        file_name = rename_using_format(template, file_data).strip(" .")
         if not file_name:
             file_name = "lyrics"
         file_path = os.path.join(download_path, f"{file_name}.lrc")
@@ -924,6 +926,24 @@ _FETCH_VALUE_FLAGS = frozenset({"--artist", "--title", "--album", "--from"})
 _FETCH_OPTION_FLAGS = frozenset({"--direct", "-D"})
 
 
+def _looks_like_url(token: str) -> bool:
+    return token.startswith(("http://", "https://", "www."))
+
+
+def _abort_value_flag_after_url(flag: str, url: str) -> NoReturn:
+    """Refuse to swallow a URL as the value of a value-taking flag.
+
+    A URL after ``--directory`` / ``--artist`` is almost certainly the fetch
+    positional; consuming it would download into a directory/title named
+    after the URL (or silently drop the intended metadata). Error out
+    clearly instead.
+    """
+    print_error(f"{flag} requires a non-URL value; a URL was given: {url}")
+    print_info("Usage: librelyrics --directory PATH <URL>, or"
+                " librelyrics fetch http://...")
+    raise typer.Exit(code=2)
+
+
 def _normalize_fetch_argv(args: list[str]) -> list[str]:
     """Reorder argv for implicit fetch invocations.
 
@@ -946,12 +966,26 @@ def _normalize_fetch_argv(args: list[str]) -> list[str]:
         if arg in _ROOT_OPTION_FLAGS:
             root.append(arg)
             i += 1
-        elif arg in _ROOT_VALUE_FLAGS and i + 1 < len(args):
-            root.extend([arg, args[i + 1]])
-            i += 2
-        elif arg in _FETCH_VALUE_FLAGS and i + 1 < len(args):
-            fetch_opts.extend([arg, args[i + 1]])
-            i += 2
+        elif arg in _ROOT_VALUE_FLAGS:
+            nxt = args[i + 1] if i + 1 < len(args) else None
+            if nxt is None:
+                fetch_opts.append(arg)
+                i +=1
+                continue
+            if _looks_like_url(nxt):
+                _abort_value_flag_after_url(arg, nxt)
+            root.extend([arg, nxt])
+            i +=2
+        elif arg in _FETCH_VALUE_FLAGS:
+            nxt = args[i + 1] if i + 1 < len(args) else None
+            if nxt is None:
+                fetch_opts.append(arg)
+                i +=1
+                continue
+            if _looks_like_url(nxt):
+                _abort_value_flag_after_url(arg, nxt)
+            fetch_opts.extend([arg, nxt])
+            i +=2
         elif arg in _FETCH_OPTION_FLAGS:
             fetch_opts.append(arg)
             i += 1
