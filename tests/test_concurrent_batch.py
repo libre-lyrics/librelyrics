@@ -11,7 +11,7 @@ from librelyrics.modules.base import (
     ModuleMeta,
 )
 from librelyrics.pipeline import fetch_batch_query
-from tests.fakes import _response, UrlPlugin
+from tests.fakes import UrlPlugin, _response
 
 
 class ConfigErrorSearch(LyricsModule):

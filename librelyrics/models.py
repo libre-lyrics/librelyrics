@@ -65,7 +65,7 @@ class LyricsResponse:
             if self.album:
                 lines.append(f'[al:{_escape_lrc_tag(self.album)}]')
             lines.append(f'[ar:{_escape_lrc_tag(self.artist)}]')
-            if self.duration_ms:
+            if self.duration_ms is not None and self.duration_ms > 0:
                 minutes, seconds = divmod(self.duration_ms / 1000, 60)
                 lines.append(f'[length:{minutes:0>2.0f}:{seconds:05.2f}]')
 

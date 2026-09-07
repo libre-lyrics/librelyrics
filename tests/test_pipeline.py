@@ -304,19 +304,32 @@ def test_unknown_url_with_search_priority_raises_no_matching() -> None:
         )
 
 
-def test_spotify_and_apple_music_classify_url() -> None:
-    from applemusic.module import AppleMusicModule
-    from spotify.module import SpotifyModule
+def test_provider_specific_url_shapes_classify() -> None:
+    """Provider-specific URL shapes map to track/album/playlist correctly."""
+    import re
 
-    assert AppleMusicModule.classify_url(
+    from librelyrics.modules.base import LyricsModule, ModuleMeta
+
+    class ShapePlugin(LyricsModule):
+        META = ModuleMeta(
+            id="shapeplug",
+            name="ShapePlug",
+            regex=re.compile(r"(music\.apple\.com|open\.spotify\.com)"),
+        )
+
+        def fetch(self):  # pragma: no cover - never called
+            raise AssertionError("fetch must not run")
+
+    # Apple Music links a track "?" inside an album URL via ?i=<trackId>
+    assert ShapePlugin.classify_url(
         "https://music.apple.com/us/album/thinking-out-loud/1440871909?i=1440872388"
     ) == "track"
-    assert AppleMusicModule.classify_url(
+    assert ShapePlugin.classify_url(
         "https://music.apple.com/us/album/x-deluxe-edition/1440871909"
     ) == "album"
-    assert SpotifyModule.classify_url("https://open.spotify.com/track/abc") == "track"
-    assert SpotifyModule.classify_url("https://open.spotify.com/album/abc") == "album"
-    assert SpotifyModule.classify_url("https://open.spotify.com/playlist/abc") == "playlist"
+    assert ShapePlugin.classify_url("https://open.spotify.com/track/abc") == "track"
+    assert ShapePlugin.classify_url("https://open.spotify.com/album/abc") == "album"
+    assert ShapePlugin.classify_url("https://open.spotify.com/playlist/abc") == "playlist"
 
 
 def test_search_keeps_resolved_album_on_response() -> None:
