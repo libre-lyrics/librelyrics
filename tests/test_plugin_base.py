@@ -74,6 +74,34 @@ def test_default_fetch_album_uses_list_tracks() -> None:
     assert [r.title for r in responses] == ["One", "Two"]
 
 
+def test_fetch_album_raises_when_every_track_fails() -> None:
+    import pytest
+
+    from librelyrics.exceptions import ProviderError
+
+    class AllFail(UrlPlugin):
+        def fetch(self):
+            raise ProviderError("all tracks down")
+
+    plugin = AllFail(TrackQuery(url="https://example.com/album/1"), {})
+    with pytest.raises(ProviderError, match="all tracks down"):
+        plugin.fetch_album()
+
+
+def test_fetch_album_keeps_partial_results_on_lyrics_not_found() -> None:
+    from librelyrics.exceptions import LyricsNotFound
+
+    class OneMissing(UrlPlugin):
+        def fetch(self):
+            if self.query.title == "Two":
+                raise LyricsNotFound("no lyrics")
+            return super().fetch()
+
+    plugin = OneMissing(TrackQuery(url="https://example.com/album/1"), {})
+    responses = plugin.fetch_album()
+    assert [r.title for r in responses] == ["One"]
+
+
 def test_resolve_capability_flag_exists() -> None:
     assert ModuleCapability.RESOLVE
 

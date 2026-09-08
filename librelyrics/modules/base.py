@@ -1,4 +1,4 @@
-﻿"""Abstract base class for all lyrics modules (plugins).
+"""Abstract base class for all lyrics modules (plugins).
 
 All librelyrics plugins must inherit from LyricsModule and implement the required
 interface. Plugins declare their capabilities via the META class attribute.
@@ -337,6 +337,7 @@ class LyricsModule(ABC):
 
     def _fetch_listed_tracks(self) -> list[LyricsResponse]:
         results: list[LyricsResponse] = []
+        last_error: Exception | None = None
         for track in self.list_tracks():
             plugin = self.__class__(track, self.config)
             try:
@@ -347,10 +348,14 @@ class LyricsModule(ABC):
                     track.artist, track.title,
                 )
             except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "Failed to fetch lyrics for track %s: %s",
-                    track.title, exc,
+                last_error = exc
+                logger.error(
+                    "Failed to fetch lyrics for track %s - %s: %s",
+                    track.artist, track.title, exc,
                 )
+        # A batch where every track failed must not look like an empty success.
+        if not results and last_error is not None:
+            raise last_error
         return results
 
     # ------------------------------------------------------------------

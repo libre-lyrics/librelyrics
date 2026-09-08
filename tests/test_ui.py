@@ -1,12 +1,13 @@
 from collections import Counter
 
+from rich.console import Console
+
 from librelyrics.ui import (
     FetchSummary,
     format_grouped_reasons,
     group_failure_reasons,
     print_fetch_summary,
 )
-from rich.console import Console
 
 
 def test_group_failure_reasons_counts() -> None:

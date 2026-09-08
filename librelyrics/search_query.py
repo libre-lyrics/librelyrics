@@ -19,11 +19,14 @@ def search_query_variants(query: TrackQuery) -> list[TrackQuery]:
     progressively closer to the original strings. URL is always cleared.
     """
     base = replace(query, url=None)
-    if not query.artist or not query.title:
+    if not (query.artist or "").strip() or not (query.title or "").strip():
         return [base]
 
     artists = _artist_variants(query.artist)
     titles = _title_variants(query.title)
+    if not artists or not titles:
+        return [base]
+
     pairs: list[tuple[str, str]] = [
         (artists[0], titles[0]),
         (artists[0], titles[-1]),
@@ -51,7 +54,7 @@ def _artist_variants(artist: str) -> list[str]:
     out: list[str] = []
     if primary:
         out.append(primary)
-    if artist not in out:
+    if artist and artist not in out:
         out.append(artist)
     return out
 

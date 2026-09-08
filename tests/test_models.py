@@ -14,3 +14,26 @@ def test_to_lrc_escapes_brackets_in_metadata() -> None:
     assert "[al:Album (Deluxe)]" in text
     assert _escape_lrc_tag("a]b") == "a)b"
     assert _escape_lrc_tag("[Live]") == "(Live)"
+
+
+def test_to_lrc_positive_duration_emits_length_tag() -> None:
+    response = LyricsResponse(
+        title="T",
+        artist="A",
+        lyrics=[LyricsLine(text="hello")],
+        source="Test",
+        duration_ms=180000,
+    )
+    assert "[length:03:00.00]" in response.to_lrc()
+
+
+def test_to_lrc_omits_length_tag_for_zero_and_negative_duration() -> None:
+    for duration in (0, -100):
+        response = LyricsResponse(
+            title="T",
+            artist="A",
+            lyrics=[LyricsLine(text="hello")],
+            source="Test",
+            duration_ms=duration,
+        )
+        assert "length" not in response.to_lrc()

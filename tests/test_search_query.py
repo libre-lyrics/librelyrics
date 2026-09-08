@@ -38,3 +38,12 @@ def test_simple_query_is_single_variant() -> None:
     assert len(variants) == 1
     assert variants[0].artist == "Adele"
     assert variants[0].title == "Hello"
+
+
+def test_whitespace_only_artist_or_title_does_not_crash() -> None:
+    variants = search_query_variants(TrackQuery(artist="   ", title="   "))
+    assert variants == [TrackQuery(url=None, artist="   ", title="   ")]
+
+    variants = search_query_variants(TrackQuery(artist="A", title="   "))
+    assert len(variants) == 1
+    assert variants[0].artist == "A"

@@ -7,7 +7,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 
-from librelyrics.config import ConfigManager
+from librelyrics.config import ConfigManager, as_list
 from librelyrics.exceptions import (
     ConfigurationError,
     DirectModeError,
@@ -82,8 +82,7 @@ def apply_query_metadata(query: TrackQuery, response: LyricsResponse) -> LyricsR
 
 
 def _search_priority_ids(config_manager: ConfigManager) -> list[str]:
-    raw = config_manager.get("search_priority") or []
-    return [str(item).strip() for item in raw if str(item).strip()]
+    return as_list(config_manager.get("search_priority"))
 
 
 def apply_cli_overrides(resolved: TrackQuery, original: TrackQuery) -> TrackQuery:
@@ -331,7 +330,7 @@ def _search_loop(
     config_manager: ConfigManager,
     priority: list[str],
 ) -> LyricsResponse:
-    preferred = list(config_manager.get("preferred_lyrics_order") or [])
+    preferred = as_list(config_manager.get("preferred_lyrics_order"))
     cap = int(config_manager.get("max_search_attempts") or 5)
     search_query = replace(query, url=None)
     attempts = 0
