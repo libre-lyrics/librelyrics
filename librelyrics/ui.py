@@ -139,7 +139,7 @@ def print_info(message: str) -> None:
     console.print(f"[info]Info[/info]      {message}")
 
 
-def create_progress() -> Progress:
+def create_progress(transient: bool = False) -> Progress:
     """Create a progress bar for batch operations."""
     return Progress(
         SpinnerColumn(),
@@ -148,7 +148,7 @@ def create_progress() -> Progress:
         TaskProgressColumn(),
         TimeRemainingColumn(),
         console=console,
-        transient=False,
+        transient=transient,
     )
 
 

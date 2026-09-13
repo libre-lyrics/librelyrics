@@ -57,15 +57,16 @@ from librelyrics.ui import (
 )
 
 app = typer.Typer(
+    add_completion=True,
     name="librelyrics",
     help="Fetch lyrics from various sources and save as LRC files.",
     rich_markup_mode="rich",
     no_args_is_help=False,
     invoke_without_command=True,
-    add_completion=False,
 )
 
 config_app = typer.Typer(
+    add_completion=True,
     name="config",
     help="View and edit configuration.",
     invoke_without_command=True,
@@ -73,6 +74,7 @@ config_app = typer.Typer(
 )
 
 plugin_app = typer.Typer(
+    add_completion=True,
     name="plugin",
     help="Manage lyrics provider plugins.",
     invoke_without_command=True,
@@ -591,7 +593,7 @@ def handle_fetch(
             fetch_failures: list[tuple[str, str]] = []
             completed = 0
 
-            with create_progress() as progress:
+            with create_progress(transient=True) as progress:
                 fetch_task = progress.add_task(
                     format_progress_description("Loading track list"),
                     total=total_tracks,
@@ -642,7 +644,6 @@ def handle_fetch(
                     responses,
                     librelyrics.config,
                     folder_name,
-                    progress=progress,
                     album_tag=(
                         session_header.get("title")
                         if session_header and session_header.get("kind") == "album"
@@ -665,7 +666,7 @@ def handle_fetch(
             )
             return _save_exit_code(successful, skipped, all_failed)
 
-        with create_progress() as progress:
+        with create_progress(transient=True) as progress:
             fetch_task = progress.add_task(format_progress_description("Fetching"), total=1)
             response = librelyrics.fetch_query(
                 query, direct=direct, from_plugin=from_plugin,
@@ -1034,7 +1035,7 @@ def main() -> None:
         first_positional is None
         or first_positional not in _SUBCOMMANDS
     )
-    if needs_fetch and not any(a in ("--help", "-h", "--version", "-V") for a in args):
+    if needs_fetch and not any(a in ("--help", "-h", "--version", "-V", "--install-completion", "--show-completion") for a in args):
         sys.argv = [sys.argv[0], *_normalize_fetch_argv(args)]
 
     app()
