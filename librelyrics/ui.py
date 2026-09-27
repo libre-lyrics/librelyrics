@@ -2,6 +2,7 @@
 
 Provides styled console output, progress bars, and formatted displays.
 """
+
 from __future__ import annotations
 
 import sys
@@ -35,17 +36,19 @@ if sys.platform == "win32":
     ):
         stream.reconfigure(encoding="utf-8", errors="replace")
 
-LIBRELYRICS_THEME = Theme({
-    "info": "default",
-    "success": "green",
-    "warning": "yellow",
-    "error": "red",
-    "label": "dim",
-    "value": "default",
-    "accent": "cyan",
-    "muted": "dim",
-    "dim": "dim",
-})
+LIBRELYRICS_THEME = Theme(
+    {
+        "info": "default",
+        "success": "green",
+        "warning": "yellow",
+        "error": "red",
+        "label": "dim",
+        "value": "default",
+        "accent": "cyan",
+        "muted": "dim",
+        "dim": "dim",
+    }
+)
 
 console = Console(file=sys.__stdout__, theme=LIBRELYRICS_THEME)
 
@@ -152,7 +155,9 @@ def create_progress(transient: bool = False) -> Progress:
     )
 
 
-def format_progress_description(action: str, title: str = "", max_title_len: int = 28) -> str:
+def format_progress_description(
+    action: str, title: str = "", max_title_len: int = 28
+) -> str:
     """Format a progress task description."""
     if not title:
         return action
@@ -233,7 +238,9 @@ def print_plugins_table(plugins: list[dict]) -> None:
     table.add_column("Description", style="muted")
 
     for plugin in plugins:
-        auth_badge = "[warning]yes[/warning]" if plugin["requires_auth"] else "[muted]no[/muted]"
+        auth_badge = (
+            "[warning]yes[/warning]" if plugin["requires_auth"] else "[muted]no[/muted]"
+        )
         pos_str = str(plugin.get("position", "?"))
 
         lyrics_types = plugin.get("lyrics_types", [])
@@ -262,7 +269,9 @@ def print_plugins_table(plugins: list[dict]) -> None:
 def print_config_table(config: dict, title: str = "Configuration") -> None:
     """Print configuration in a formatted table."""
     print_logo()
-    table = Table(title=title, show_header=True, header_style="bold", border_style="dim")
+    table = Table(
+        title=title, show_header=True, header_style="bold", border_style="dim"
+    )
     table.add_column("Key", style="muted")
     table.add_column("Value")
 
@@ -280,7 +289,9 @@ def print_config_table(config: dict, title: str = "Configuration") -> None:
 
 def print_lyrics_result(response: LyricsResponse) -> None:
     """Print a single lyrics result."""
-    console.print(f"  [success]ok[/success]  {response.title} - [muted]{response.artist}[/muted]")
+    console.print(
+        f"  [success]ok[/success]  {response.title} - [muted]{response.artist}[/muted]"
+    )
 
 
 def print_download_summary(successful: list[str], failed: list[str]) -> None:

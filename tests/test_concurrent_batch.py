@@ -10,7 +10,7 @@ from librelyrics.modules.base import (
     ModuleCapability,
     ModuleMeta,
 )
-from librelyrics.pipeline import fetch_batch_query
+from librelyrics.pipeline import collect_track_failures, fetch_batch_query
 from tests.fakes import UrlPlugin, _response
 
 
@@ -60,3 +60,32 @@ def test_concurrent_batch_survives_configuration_error() -> None:
     assert results[0].title == "One"
     assert len(failures) == 1
     assert failures[0][0] == "Two"
+
+
+def test_direct_batch_reports_tracks_without_lyrics() -> None:
+    """--direct passes no callbacks, so missing tracks come from diffing."""
+
+    class PartialAlbum(UrlPlugin):
+        def fetch_album(self) -> list[LyricsResponse]:
+            return [
+                _response(
+                    source=self.META.name,
+                    query=TrackQuery(title="One"),
+                    synced=True,
+                )
+            ]
+
+    url = "https://example.com/album/1"
+    plugin = PartialAlbum(TrackQuery(url=url), {})
+    tracks = plugin.list_tracks()
+
+    responses = fetch_batch_query(
+        TrackQuery(url=url),
+        [PartialAlbum],
+        _cm(),
+        direct=True,
+    )
+    failures = collect_track_failures(tracks, responses, [])
+
+    assert [failure.track.title for failure in failures] == ["Two"]
+    assert failures[0].reason == "Lyrics not found"

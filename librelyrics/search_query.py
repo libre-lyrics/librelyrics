@@ -1,4 +1,5 @@
 """Build simpler artist/title variants for metadata search."""
+
 from __future__ import annotations
 
 import re

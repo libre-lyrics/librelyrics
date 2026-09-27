@@ -3,6 +3,7 @@
 Handles loading, saving, and validating configuration from config.json.
 Supports auto-merging plugin default configurations.
 """
+
 from __future__ import annotations
 
 import json
@@ -14,7 +15,7 @@ from typing import Any
 from librelyrics.exceptions import ConfigurationError, CorruptedConfig
 from librelyrics.modules.base import LyricsModule
 
-logger = logging.getLogger('librelyrics.config')
+logger = logging.getLogger("librelyrics.config")
 
 
 def get_config_path() -> Path:
@@ -23,12 +24,12 @@ def get_config_path() -> Path:
     Returns:
         Path to config.json in the appropriate location.
     """
-    if os.name == 'nt':
-        config_dir = Path(os.environ.get('APPDATA', '')) / 'librelyrics'
+    if os.name == "nt":
+        config_dir = Path(os.environ.get("APPDATA", "")) / "librelyrics"
     else:
-        config_dir = Path.home() / '.config' / 'librelyrics'
+        config_dir = Path.home() / ".config" / "librelyrics"
 
-    return config_dir / 'config.json'
+    return config_dir / "config.json"
 
 
 def as_list(value: Any) -> list[str]:
@@ -59,17 +60,17 @@ def get_default_config() -> dict:
         Dictionary with default configuration values.
     """
     return {
-        'download_path': 'downloads',
-        'create_folder': True,
-        'album_folder_name': '{name} - {artists}',
-        'play_folder_name': '{name} - {owner}',
-        'file_name': '{track_number}. {name}',
-        'force_download': False,
-        'preferred_lyrics_order': ['RICH', 'SYNCED', 'UNSYNCED'],
-        'search_priority': [],
-        'max_search_attempts': 5,
-        'max_concurrent_tracks': 4,
-        'plugins': {},  # Plugin-specific configs go here
+        "download_path": "downloads",
+        "create_folder": True,
+        "album_folder_name": "{name} - {artists}",
+        "play_folder_name": "{name} - {owner}",
+        "file_name": "{track_number}. {name}",
+        "force_download": False,
+        "preferred_lyrics_order": ["RICH", "SYNCED", "UNSYNCED"],
+        "search_priority": [],
+        "max_search_attempts": 5,
+        "max_concurrent_tracks": 4,
+        "plugins": {},  # Plugin-specific configs go here
     }
 
 
@@ -100,17 +101,21 @@ class ConfigManager:
             CorruptedConfig: If config file cannot be parsed.
         """
         if not self.config_path.exists():
-            logger.info(f"Config file not found at {self.config_path}, creating defaults")
+            logger.info(
+                f"Config file not found at {self.config_path}, creating defaults"
+            )
             default_config = get_default_config()
             self._config = default_config
             try:
                 self.save()
             except Exception as e:
-                logger.warning(f"Failed to save default config to {self.config_path}: {e}")
+                logger.warning(
+                    f"Failed to save default config to {self.config_path}: {e}"
+                )
             return default_config
 
         try:
-            with open(self.config_path, encoding='utf-8') as f:
+            with open(self.config_path, encoding="utf-8") as f:
                 config = json.load(f)
                 logger.debug(f"Loaded config from {self.config_path}")
                 return config
@@ -127,7 +132,7 @@ class ConfigManager:
         """Save current configuration to file."""
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
 
-        with open(self.config_path, 'w', encoding='utf-8') as f:
+        with open(self.config_path, "w", encoding="utf-8") as f:
             json.dump(self._config, f, indent=4)
         logger.debug(f"Saved config to {self.config_path}")
 
@@ -179,17 +184,14 @@ class ConfigManager:
         """
         plugin_name = plugin_cls.META.name.lower()
         defaults = plugin_cls.default_config()
-        plugins_config = self._config.get('plugins', {})
+        plugins_config = self._config.get("plugins", {})
         stored = plugins_config.get(plugin_name, {})
         if not stored:
             stored = plugins_config.get(plugin_cls.META.id, {})
         merged = {**defaults, **stored}
         return merged
 
-    def merge_plugin_defaults(
-        self,
-        plugins: list[type[LyricsModule]]
-    ) -> bool:
+    def merge_plugin_defaults(self, plugins: list[type[LyricsModule]]) -> bool:
         """Merge default configurations from all plugins.
 
         Adds missing plugin config sections with their defaults.
@@ -203,8 +205,8 @@ class ConfigManager:
         modified = False
 
         # Ensure plugins section exists
-        if 'plugins' not in self._config:
-            self._config['plugins'] = {}
+        if "plugins" not in self._config:
+            self._config["plugins"] = {}
             modified = True
 
         for plugin_cls in plugins:
@@ -214,12 +216,12 @@ class ConfigManager:
             if not defaults:
                 continue
 
-            if plugin_key not in self._config['plugins']:
-                self._config['plugins'][plugin_key] = defaults
+            if plugin_key not in self._config["plugins"]:
+                self._config["plugins"][plugin_key] = defaults
                 logger.debug(f"Added default config for plugin: {plugin_key}")
                 modified = True
             else:
-                stored = self._config['plugins'][plugin_key]
+                stored = self._config["plugins"][plugin_key]
                 for key, value in defaults.items():
                     if key not in stored:
                         stored[key] = value
@@ -227,10 +229,7 @@ class ConfigManager:
 
         return modified
 
-    def validate_plugin_configs(
-        self,
-        plugins: list[type[LyricsModule]]
-    ) -> None:
+    def validate_plugin_configs(self, plugins: list[type[LyricsModule]]) -> None:
         """Validate configuration for all plugins.
 
         Args:

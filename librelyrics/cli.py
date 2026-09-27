@@ -7,6 +7,7 @@ Modern CLI powered by Typer with:
 - Rich terminal output
 - Universal URL handling
 """
+
 from __future__ import annotations
 
 import os
@@ -104,21 +105,31 @@ def _normalize_cli_url(url: str | None) -> str | None:
 def callback(
     ctx: typer.Context,
     verbose: bool = typer.Option(
-        False, "--verbose", "-v", help="Enable verbose debug output.",
+        False,
+        "--verbose",
+        "-v",
+        help="Enable verbose debug output.",
     ),
     version: bool = typer.Option(
         False,
-        "--version", "-V",
+        "--version",
+        "-V",
         help="Show version and exit.",
         callback=_version_callback,
         is_eager=True,
     ),
     directory: Optional[str] = typer.Option(
-        None, "--directory", "-d", metavar="PATH",
+        None,
+        "--directory",
+        "-d",
+        metavar="PATH",
         help="Output directory for lyrics files.",
     ),
     force: bool = typer.Option(
-        False, "--force", "-f", help="Overwrite existing lyrics files.",
+        False,
+        "--force",
+        "-f",
+        help="Overwrite existing lyrics files.",
     ),
 ) -> None:
     """Fetch lyrics from various sources and save as LRC files."""
@@ -135,30 +146,47 @@ def callback(
 def fetch_command(
     ctx: typer.Context,
     url: Optional[str] = typer.Argument(
-        None, help="URL or local path to fetch lyrics for.",
+        None,
+        help="URL or local path to fetch lyrics for.",
     ),
     artist: Optional[str] = typer.Option(
-        None, "--artist", help="Track artist for a metadata search.",
+        None,
+        "--artist",
+        help="Track artist for a metadata search.",
     ),
     title: Optional[str] = typer.Option(
-        None, "--title", help="Track title for a metadata search.",
+        None,
+        "--title",
+        help="Track title for a metadata search.",
     ),
     album: Optional[str] = typer.Option(
-        None, "--album", help="Album name (optional metadata).",
+        None,
+        "--album",
+        help="Album name (optional metadata).",
     ),
     direct: bool = typer.Option(
-        False, "--direct", "-D",
+        False,
+        "--direct",
+        "-D",
         help="Fetch only from the plugin that matches the URL.",
     ),
     from_plugin: Optional[str] = typer.Option(
-        None, "--from", help="Force lyrics from this plugin id after resolve.",
+        None,
+        "--from",
+        help="Force lyrics from this plugin id after resolve.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Overwrite existing lyrics files.",
     ),
 ) -> None:
     """Fetch lyrics for a URL or local path."""
     obj = ctx.ensure_object(dict)
     verbose = obj.get("verbose", False)
     directory = obj.get("directory")
-    force = obj.get("force", False)
+    force = force or obj.get("force", False)
 
     url_was_prompted = False
     if not url and not (artist and title):
@@ -169,10 +197,16 @@ def fetch_command(
             raise typer.Exit()
 
     code = handle_fetch(
-        url, verbose=verbose, directory=directory,
-        force=force, show_logo=not url_was_prompted,
-        artist=artist, title=title, album=album,
-        direct=direct, from_plugin=from_plugin,
+        url,
+        verbose=verbose,
+        directory=directory,
+        force=force,
+        show_logo=not url_was_prompted,
+        artist=artist,
+        title=title,
+        album=album,
+        direct=direct,
+        from_plugin=from_plugin,
     )
     raise typer.Exit(code=code)
 
@@ -211,7 +245,9 @@ def config_reset() -> None:
 
 @config_app.command("set")
 def config_set(
-    key: Annotated[str, typer.Argument(help="Config key (e.g. plugins.spotify.sp_dc).")],
+    key: Annotated[
+        str, typer.Argument(help="Config key (e.g. plugins.spotify.sp_dc).")
+    ],
     value: Annotated[str, typer.Argument(help="Value to set.")],
 ) -> None:
     """Set a single config value."""
@@ -219,7 +255,7 @@ def config_set(
     config = cm.raw
 
     # Handle nested keys like plugins.spotify.sp_dc
-    parts = key.split('.')
+    parts = key.split(".")
     current = config
     for part in parts[:-1]:
         if part not in current:
@@ -228,11 +264,14 @@ def config_set(
 
     # Convert value types. Keep digit-only plugin secrets as strings.
     converted: str | bool | int | list[str] = value
-    if value.lower() == 'true':
+    if value.lower() == "true":
         converted = True
-    elif value.lower() == 'false':
+    elif value.lower() == "false":
         converted = False
-    elif parts[-1] in {"max_search_attempts", "max_concurrent_tracks"} and value.isdigit():
+    elif (
+        parts[-1] in {"max_search_attempts", "max_concurrent_tracks"}
+        and value.isdigit()
+    ):
         converted = int(value)
     elif parts[-1] in {"search_priority", "preferred_lyrics_order"}:
         converted = as_list(value)
@@ -262,24 +301,24 @@ def edit_config_interactive() -> int:
     config = cm.raw
 
     # Ensure nested structure exists
-    if 'plugins' not in config:
-        config['plugins'] = {}
+    if "plugins" not in config:
+        config["plugins"] = {}
 
     # Discover plugins and merge defaults once
     plugins = load_all_plugins(config)
     for plugin_cls in plugins:
         plugin_name = plugin_cls.META.name.lower()
         defaults = plugin_cls.default_config()
-        if plugin_name not in config['plugins']:
-            config['plugins'][plugin_name] = defaults
+        if plugin_name not in config["plugins"]:
+            config["plugins"][plugin_name] = defaults
         else:
             for key, value in defaults.items():
-                config['plugins'][plugin_name].setdefault(key, value)
+                config["plugins"][plugin_name].setdefault(key, value)
 
     # ── Build the section menu ──────────────────────────────────
-    GENERAL   = "General Settings"
+    GENERAL = "General Settings"
     FILE_NAME = "File Naming"
-    SEARCH    = "Search and lyrics quality"
+    SEARCH = "Search and lyrics quality"
     SAVE_EXIT = "Save & Exit"
 
     section_choices: list[str] = [GENERAL, FILE_NAME, SEARCH]
@@ -295,7 +334,9 @@ def edit_config_interactive() -> int:
     section_choices += [SAVE_EXIT]
 
     console.print("\n[bold]Configuration[/bold]")
-    console.print("[muted]Choose a section to edit. You can edit multiple sections before saving.[/muted]\n")
+    console.print(
+        "[muted]Choose a section to edit. You can edit multiple sections before saving.[/muted]\n"
+    )
 
     while True:
         section = questionary.select(
@@ -334,7 +375,7 @@ def _edit_plugin_config(config: dict, plugin_cls: type) -> None:
     console.print("[muted]Press Enter to keep current value[/muted]")
 
     for key, description in schema.items():
-        current_value = config['plugins'][plugin_name].get(key, '')
+        current_value = config["plugins"][plugin_name].get(key, "")
 
         if isinstance(current_value, bool):
             answer = questionary.confirm(
@@ -348,7 +389,7 @@ def _edit_plugin_config(config: dict, plugin_cls: type) -> None:
             ).ask()
 
         if answer is not None:
-            config['plugins'][plugin_name][key] = answer
+            config["plugins"][plugin_name][key] = answer
 
 
 def _edit_search_settings(config: dict, plugins: list) -> None:
@@ -359,32 +400,32 @@ def _edit_search_settings(config: dict, plugins: list) -> None:
     if ids:
         console.print(f"[muted]Installed plugin ids: {', '.join(ids)}[/muted]")
 
-    current_order = config.get('preferred_lyrics_order', ['RICH', 'SYNCED', 'UNSYNCED'])
+    current_order = config.get("preferred_lyrics_order", ["RICH", "SYNCED", "UNSYNCED"])
     order_text = questionary.text(
         "Preferred lyrics order (comma-separated):",
-        default=', '.join(current_order),
+        default=", ".join(current_order),
     ).ask()
     if order_text is not None:
-        config['preferred_lyrics_order'] = [
-            part.strip().upper() for part in order_text.split(',') if part.strip()
+        config["preferred_lyrics_order"] = [
+            part.strip().upper() for part in order_text.split(",") if part.strip()
         ]
 
-    current_priority = config.get('search_priority', [])
+    current_priority = config.get("search_priority", [])
     priority_text = questionary.text(
         "Search priority plugin ids (comma-separated, empty = URL plugin only):",
-        default=', '.join(current_priority),
+        default=", ".join(current_priority),
     ).ask()
     if priority_text is not None:
-        config['search_priority'] = [
-            part.strip() for part in priority_text.split(',') if part.strip()
+        config["search_priority"] = [
+            part.strip() for part in priority_text.split(",") if part.strip()
         ]
 
     attempts = questionary.text(
         "Max search attempts per track:",
-        default=str(config.get('max_search_attempts', 5)),
+        default=str(config.get("max_search_attempts", 5)),
     ).ask()
     if attempts and attempts.isdigit():
-        config['max_search_attempts'] = int(attempts)
+        config["max_search_attempts"] = int(attempts)
 
 
 def _edit_general_settings(config: dict) -> None:
@@ -393,52 +434,54 @@ def _edit_general_settings(config: dict) -> None:
 
     download_path = questionary.path(
         "Download directory:",
-        default=config.get('download_path', 'downloads'),
+        default=config.get("download_path", "downloads"),
         only_directories=True,
     ).ask()
     if download_path:
-        config['download_path'] = download_path
+        config["download_path"] = download_path
 
     create_folder = questionary.confirm(
         "Create folders for albums/playlists?",
-        default=config.get('create_folder', True),
+        default=config.get("create_folder", True),
     ).ask()
     if create_folder is not None:
-        config['create_folder'] = create_folder
+        config["create_folder"] = create_folder
 
     force = questionary.confirm(
         "Overwrite existing files by default?",
-        default=config.get('force_download', False),
+        default=config.get("force_download", False),
     ).ask()
     if force is not None:
-        config['force_download'] = force
+        config["force_download"] = force
 
 
 def _edit_file_naming(config: dict) -> None:
     """Prompt for file/folder naming templates."""
     console.print("\n[bold]File naming[/bold]")
-    console.print("[muted]Available: {name}, {artist}, {album_name}, {track_number}[/muted]")
+    console.print(
+        "[muted]Available: {name}, {artist}, {album_name}, {track_number}[/muted]"
+    )
 
     file_name = questionary.text(
         "File name format:",
-        default=config.get('file_name', '{track_number}. {name}'),
+        default=config.get("file_name", "{track_number}. {name}"),
     ).ask()
     if file_name:
-        config['file_name'] = file_name
+        config["file_name"] = file_name
 
     album_folder = questionary.text(
         "Album folder format:",
-        default=config.get('album_folder_name', '{name} - {artists}'),
+        default=config.get("album_folder_name", "{name} - {artists}"),
     ).ask()
     if album_folder:
-        config['album_folder_name'] = album_folder
+        config["album_folder_name"] = album_folder
 
     playlist_folder = questionary.text(
         "Playlist folder format:",
-        default=config.get('play_folder_name', '{name} - {owner}'),
+        default=config.get("play_folder_name", "{name} - {owner}"),
     ).ask()
     if playlist_folder:
-        config['play_folder_name'] = playlist_folder
+        config["play_folder_name"] = playlist_folder
 
 
 # ── Plugin sub-commands ─────────────────────────────────────────
@@ -462,7 +505,9 @@ def plugin_list() -> None:
 
 @plugin_app.command("install")
 def plugin_install(
-    package: Annotated[str, typer.Argument(help="Package name to install (e.g. librelyrics-foo).")],
+    package: Annotated[
+        str, typer.Argument(help="Package name to install (e.g. librelyrics-foo).")
+    ],
 ) -> None:
     """Install an external plugin package."""
     success = install_plugin(package)
@@ -531,9 +576,9 @@ def handle_fetch(
         return 1
 
     if directory:
-        librelyrics.config['download_path'] = directory
+        librelyrics.config["download_path"] = directory
     if force:
-        librelyrics.config['force_download'] = True
+        librelyrics.config["force_download"] = True
 
     if url and os.path.isdir(url):
         print_error(
@@ -550,11 +595,15 @@ def handle_fetch(
     folder_name = None
     total_tracks = None
     session_header: dict | None = None
-    priority_ids = as_list(librelyrics.config_manager.get("search_priority"))
-    search_plugins = [
-        _plugin_display_name(librelyrics.plugins, plugin_id)
-        for plugin_id in priority_ids
-    ]
+    # --direct skips the search chain, so do not advertise a search priority.
+    search_plugins = (
+        []
+        if direct
+        else [
+            _plugin_display_name(librelyrics.plugins, plugin_id)
+            for plugin_id in as_list(librelyrics.config_manager.get("search_priority"))
+        ]
+    )
 
     if plugin_cls:
         plugin_config = librelyrics.config_manager.for_plugin(plugin_cls)
@@ -578,7 +627,10 @@ def handle_fetch(
             with Status(resolve_label, console=console):
                 plugin = plugin_cls(query, plugin_config)
                 folder_name, total_tracks, session_header = _batch_folder_and_count(
-                    plugin, url or "", librelyrics.config, verbose,
+                    plugin,
+                    url or "",
+                    librelyrics.config,
+                    verbose,
                 )
 
     if session_header:
@@ -603,7 +655,9 @@ def handle_fetch(
                     if phase == "listing":
                         progress.update(
                             fetch_task,
-                            description=format_progress_description("Loading track list"),
+                            description=format_progress_description(
+                                "Loading track list"
+                            ),
                         )
                     elif phase == "fetching":
                         if search_plugins:
@@ -623,7 +677,9 @@ def handle_fetch(
                     progress.update(
                         fetch_task,
                         completed=completed,
-                        description=format_progress_description("Fetching", track_title),
+                        description=format_progress_description(
+                            "Fetching", track_title
+                        ),
                     )
                     if reason:
                         label = f"{track.artist or 'Unknown'} - {track_title}"
@@ -667,9 +723,13 @@ def handle_fetch(
             return _save_exit_code(successful, skipped, all_failed)
 
         with create_progress(transient=True) as progress:
-            fetch_task = progress.add_task(format_progress_description("Fetching"), total=1)
+            fetch_task = progress.add_task(
+                format_progress_description("Fetching"), total=1
+            )
             response = librelyrics.fetch_query(
-                query, direct=direct, from_plugin=from_plugin,
+                query,
+                direct=direct,
+                from_plugin=from_plugin,
             )
             progress.update(
                 fetch_task,
@@ -694,7 +754,8 @@ def handle_fetch(
         )
 
         successful, save_failed, skipped, download_path = save_responses(
-            [response], librelyrics.config,
+            [response],
+            librelyrics.config,
         )
         print_fetch_summary(
             FetchSummary(
@@ -766,7 +827,8 @@ def _batch_folder_and_count(
             }
             template = config.get("album_folder_name", "{name} - {artists}")
             folder_name = template.replace(
-                "{name}", info.get("name", "Album"),
+                "{name}",
+                info.get("name", "Album"),
             ).replace("{artists}", artists)
             try:
                 total_tracks = int(info.get("total_tracks"))
@@ -784,7 +846,8 @@ def _batch_folder_and_count(
             }
             template = config.get("play_folder_name", "{name} - {owner}")
             folder_name = template.replace(
-                "{name}", info.get("name", "Playlist"),
+                "{name}",
+                info.get("name", "Playlist"),
             ).replace("{owner}", owner)
             try:
                 total_tracks = int(track_count)
@@ -908,7 +971,9 @@ def save_responses(
                 try:
                     local_progress.update(
                         save_task,
-                        description=format_progress_description("Saving", response.title),
+                        description=format_progress_description(
+                            "Saving", response.title
+                        ),
                     )
                     _save_one(response)
                 except Exception:
@@ -916,6 +981,7 @@ def save_responses(
                 local_progress.update(save_task, advance=1)
 
     return successful, failed, skipped, download_path
+
 
 # ── Entry point ─────────────────────────────────────────────────
 # Known subcommands that should NOT be treated as URLs
@@ -940,8 +1006,9 @@ def _abort_value_flag_after_url(flag: str, url: str) -> NoReturn:
     clearly instead.
     """
     print_error(f"{flag} requires a non-URL value; a URL was given: {url}")
-    print_info("Usage: librelyrics --directory PATH <URL>, or"
-                " librelyrics fetch http://...")
+    print_info(
+        "Usage: librelyrics --directory PATH <URL>, or librelyrics fetch http://..."
+    )
     raise typer.Exit(code=2)
 
 
@@ -971,22 +1038,22 @@ def _normalize_fetch_argv(args: list[str]) -> list[str]:
             nxt = args[i + 1] if i + 1 < len(args) else None
             if nxt is None:
                 fetch_opts.append(arg)
-                i +=1
+                i += 1
                 continue
             if _looks_like_url(nxt):
                 _abort_value_flag_after_url(arg, nxt)
             root.extend([arg, nxt])
-            i +=2
+            i += 2
         elif arg in _FETCH_VALUE_FLAGS:
             nxt = args[i + 1] if i + 1 < len(args) else None
             if nxt is None:
                 fetch_opts.append(arg)
-                i +=1
+                i += 1
                 continue
             if _looks_like_url(nxt):
                 _abort_value_flag_after_url(arg, nxt)
             fetch_opts.extend([arg, nxt])
-            i +=2
+            i += 2
         elif arg in _FETCH_OPTION_FLAGS:
             fetch_opts.append(arg)
             i += 1
@@ -1031,15 +1098,23 @@ def main() -> None:
         first_positional = arg
         break
 
-    needs_fetch = (
-        first_positional is None
-        or first_positional not in _SUBCOMMANDS
-    )
-    if needs_fetch and not any(a in ("--help", "-h", "--version", "-V", "--install-completion", "--show-completion") for a in args):
+    needs_fetch = first_positional is None or first_positional not in _SUBCOMMANDS
+    if needs_fetch and not any(
+        a
+        in (
+            "--help",
+            "-h",
+            "--version",
+            "-V",
+            "--install-completion",
+            "--show-completion",
+        )
+        for a in args
+    ):
         sys.argv = [sys.argv[0], *_normalize_fetch_argv(args)]
 
     app()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

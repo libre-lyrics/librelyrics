@@ -3,27 +3,34 @@
 
 class LibreLyricsError(Exception):
     """Base exception for all librelyrics errors."""
+
     pass
 
 
 # === Plugin Errors ===
 
+
 class NoPluginsFoundError(LibreLyricsError):
     """No plugins found in the system."""
+
     pass
+
 
 class PluginError(LibreLyricsError):
     """Base exception for plugin-related errors."""
+
     pass
 
 
 class PluginLoadError(PluginError):
     """Failed to load a plugin module."""
+
     pass
 
 
 class PluginAPIVersionError(PluginError):
     """Plugin API version is incompatible with current librelyrics version."""
+
     def __init__(self, plugin_name: str, plugin_version: int, supported_version: int):
         self.plugin_name = plugin_name
         self.plugin_version = plugin_version
@@ -36,60 +43,73 @@ class PluginAPIVersionError(PluginError):
 
 class NoMatchingModuleError(PluginError):
     """No plugin found that matches the given URL."""
+
     pass
 
 
 class DirectModeError(PluginError):
     """--direct was used without a matching URL plugin."""
+
     pass
 
 
 class UnknownPluginError(PluginError):
     """A plugin id was required but is not loaded."""
+
     pass
 
 
 class MissingMetadataError(PluginError):
     """Artist and title are required for a metadata search."""
+
     pass
 
 
 # === Config Errors ===
 
+
 class ConfigurationError(LibreLyricsError):
     """Configuration is invalid or missing required values."""
+
     pass
 
 
 class CorruptedConfig(ConfigurationError):
     """Config file is corrupted and cannot be parsed."""
+
     pass
 
 
 # === Provider Errors ===
 
+
 class ProviderError(LibreLyricsError):
     """Base exception for provider/API errors."""
+
     pass
 
 
 class NotValidSp_Dc(ProviderError):
     """Spotify sp_dc cookie is invalid."""
+
     pass
 
 
 class NoSongPlaying(ProviderError):
     """No song is currently playing on user's Spotify."""
+
     pass
 
 
 class TOTPGenerationException(ProviderError):
     """Failed to generate TOTP for Spotify authentication."""
+
     pass
 
 
 class LyricsNotFound(ProviderError):
     """Lyrics not available for the requested track."""
+
     pass
 
 
@@ -99,6 +119,17 @@ class RateLimitError(ProviderError):
     Plugins should raise this so the retry infrastructure can
     apply back-off automatically.
     """
+
     def __init__(self, message: str = "Rate limited", retry_after: float | None = None):
         self.retry_after = retry_after
         super().__init__(message)
+
+
+class TransientProviderError(ProviderError):
+    """Provider failed in a way that may succeed on a retry.
+
+    Plugins raise this for 5xx responses or dropped connections so the retry
+    infrastructure backs off and tries again.
+    """
+
+    pass

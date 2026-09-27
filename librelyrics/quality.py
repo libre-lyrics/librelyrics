@@ -1,4 +1,5 @@
 """Lyrics quality ranking for the search pipeline."""
+
 from __future__ import annotations
 
 from librelyrics.models import LyricsResponse
