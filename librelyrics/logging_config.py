@@ -1,4 +1,5 @@
 """Centralized logging configuration for librelyrics."""
+
 from __future__ import annotations
 
 import logging
@@ -14,7 +15,7 @@ _logger: logging.Logger | None = None
 
 def setup_logging(
     verbose: bool = False,
-    name: str = 'librelyrics',
+    name: str = "librelyrics",
     *,
     console: Console | None = None,
 ) -> logging.Logger:
@@ -56,8 +57,8 @@ def setup_logging(
         handler.setLevel(level)
         if verbose:
             formatter = logging.Formatter(
-                '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                datefmt='%Y-%m-%d %H:%M:%S',
+                "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+                datefmt="%Y-%m-%d %H:%M:%S",
             )
             handler.setFormatter(formatter)
 
@@ -70,7 +71,7 @@ def setup_logging(
     return logger
 
 
-def get_logger(name: str = 'librelyrics') -> logging.Logger:
+def get_logger(name: str = "librelyrics") -> logging.Logger:
     """Get a logger instance for a specific module.
 
     Args:
@@ -79,6 +80,6 @@ def get_logger(name: str = 'librelyrics') -> logging.Logger:
     Returns:
         Logger instance.
     """
-    if name == 'librelyrics':
-        return logging.getLogger('librelyrics')
-    return logging.getLogger(f'librelyrics.{name}')
+    if name == "librelyrics":
+        return logging.getLogger("librelyrics")
+    return logging.getLogger(f"librelyrics.{name}")

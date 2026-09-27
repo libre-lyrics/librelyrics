@@ -2,6 +2,7 @@
 
 Discovers plugins via Python entry points (group: 'librelyrics.plugins').
 """
+
 from __future__ import annotations
 
 import logging
@@ -16,7 +17,7 @@ from librelyrics.modules.base import (
     LyricsModule,
 )
 
-logger = logging.getLogger('librelyrics.registry')
+logger = logging.getLogger("librelyrics.registry")
 
 NO_PLUGINS_INSTALL_MESSAGE = "No plugins found. Install a plugin to continue."
 NO_API2_PLUGINS_MESSAGE = (
@@ -75,20 +76,22 @@ def _discover_plugins() -> tuple[list[type[LyricsModule]], list[str], int]:
     """Return (imported plugins, failed entry-point names, entry-point count)."""
     plugins: list[type[LyricsModule]] = []
     failed: list[str] = []
-    eps = list(entry_points(group='librelyrics.plugins'))
+    eps = list(entry_points(group="librelyrics.plugins"))
 
     for ep in eps:
         try:
             plugin_cls = ep.load()
 
-            if not isinstance(plugin_cls, type) or not issubclass(plugin_cls, LyricsModule):
+            if not isinstance(plugin_cls, type) or not issubclass(
+                plugin_cls, LyricsModule
+            ):
                 logger.warning(
                     f"Entry point '{ep.name}' does not point to a LyricsModule subclass"
                 )
                 failed.append(ep.name)
                 continue
 
-            if not hasattr(plugin_cls, 'META'):
+            if not hasattr(plugin_cls, "META"):
                 logger.warning(f"Plugin '{ep.name}' missing META attribute")
                 failed.append(ep.name)
                 continue
@@ -105,7 +108,7 @@ def _discover_plugins() -> tuple[list[type[LyricsModule]], list[str], int]:
 
 def validate_plugin(plugin_cls: type[LyricsModule]) -> bool:
     """Validate that a plugin is compatible with current API version."""
-    plugin_version = getattr(plugin_cls, 'LIBRELYRICS_API_VERSION', None)
+    plugin_version = getattr(plugin_cls, "LIBRELYRICS_API_VERSION", None)
 
     if plugin_version is None:
         logger.warning(
@@ -114,7 +117,7 @@ def validate_plugin(plugin_cls: type[LyricsModule]) -> bool:
         return False
 
     if plugin_version != LIBRELYRICS_API_VERSION:
-        display = getattr(getattr(plugin_cls, 'META', None), 'name', None)
+        display = getattr(getattr(plugin_cls, "META", None), "name", None)
         display = display or plugin_cls.__name__
         logger.warning(
             "Plugin '%s' uses API %s; LibreLyrics now requires API %s. "
@@ -125,11 +128,11 @@ def validate_plugin(plugin_cls: type[LyricsModule]) -> bool:
         )
         return False
 
-    if not hasattr(plugin_cls, 'META'):
+    if not hasattr(plugin_cls, "META"):
         logger.warning(f"Plugin '{plugin_cls.__name__}' missing META attribute")
         return False
 
-    plugin_id = getattr(plugin_cls.META, 'id', '')
+    plugin_id = getattr(plugin_cls.META, "id", "")
     if not plugin_id or not PLUGIN_ID_PATTERN.fullmatch(plugin_id):
         logger.warning(
             f"Plugin '{plugin_cls.__name__}' has invalid META.id {plugin_id!r}"

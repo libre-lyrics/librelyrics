@@ -39,7 +39,6 @@ dependencies = [
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
-    "black>=23.0.0",
     "ruff>=0.1.0",
 ]
 
@@ -65,14 +64,6 @@ include = ["librelyrics*"]
 [tool.setuptools.package-data]
 librelyrics = ["py.typed"]
 
-[tool.black]
-line-length = 88
-target-version = ["py310", "py311", "py312"]
-
-[tool.ruff]
-line-length = 88
-target-version = "py310"
-
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "C4"]
 ignore = ["E501"]
@@ -84,3 +75,6 @@ ignore = ["E501"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+
+[tool.ruff.format]
+indent-style = "space"

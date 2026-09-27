@@ -3,6 +3,7 @@
 Main entry point for the librelyrics library. Provides a unified interface
 for fetching lyrics using the plugin system.
 """
+
 from __future__ import annotations
 
 import re
@@ -14,17 +15,17 @@ from librelyrics.modules.base import LyricsModule
 from librelyrics.pipeline import fetch_batch_query, fetch_query
 from librelyrics.registry import load_all_plugins
 
-logger = get_logger('core')
+logger = get_logger("core")
 
 
-LOGO = '''
+LOGO = """
   _     _ _              _               _
  | |   (_) |__  _ __ ___| |   _   _ _ __(_) ___ ___
  | |   | | '_ \\| '__/ _ \\ |  | | | | '__| |/ __/ __|
  | |___| | |_) | | |  __/ |__| |_| | |  | | (__\\__ \\
  |_____|_|_.__/|_|  \\___|_____\\__, |_|  |_|\\___|___/
                               |___/
-'''
+"""
 
 
 class LibreLyrics:
@@ -139,11 +140,10 @@ def rename_using_format(template: str, data: dict) -> str:
     Returns:
         Formatted string with invalid filename characters removed.
     """
-    matches = re.findall(r'{(.+?)}', template)
+    matches = re.findall(r"{(.+?)}", template)
     result = template
     for match in matches:
-        placeholder = f'{{{match}}}'
-        value = str(data.get(match, ''))
+        placeholder = f"{{{match}}}"
+        value = str(data.get(match, ""))
         result = result.replace(placeholder, value)
     return re.sub(r'[\\/*?:"<>|]', "", result)
-

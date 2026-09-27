@@ -3,6 +3,7 @@
 Uses pip subprocess for package management to leverage pip's
 dependency resolution.
 """
+
 from __future__ import annotations
 
 import logging
@@ -12,7 +13,7 @@ from importlib.metadata import distributions
 
 from librelyrics.registry import load_all_plugins
 
-logger = logging.getLogger('librelyrics.plugin_manager')
+logger = logging.getLogger("librelyrics.plugin_manager")
 
 
 def install_plugin(package: str) -> bool:
@@ -105,25 +106,25 @@ def list_plugins(config: dict | None = None) -> list[dict]:
         module_name = plugin_cls.__module__
 
         # Format lyrics types as readable strings
-        lyrics_types = [lt.name.replace('_', ' ').title() for lt in meta.lyrics_types]
+        lyrics_types = [lt.name.replace("_", " ").title() for lt in meta.lyrics_types]
 
         plugin_info = {
-            'name': meta.name,
-            'id': meta.id,
-            'position': position,
-            'requires_auth': meta.requires_auth,
-            'description': meta.description,
-            'module': module_name,
-            'lyrics_types': lyrics_types,
+            "name": meta.name,
+            "id": meta.id,
+            "position": position,
+            "requires_auth": meta.requires_auth,
+            "description": meta.description,
+            "module": module_name,
+            "lyrics_types": lyrics_types,
         }
 
         # Try to get package version
         try:
-            pkg_name = module_name.split('.')[0]
+            pkg_name = module_name.split(".")[0]
             for dist in distributions():
-                if dist.name.replace('-', '_') == pkg_name.replace('-', '_'):
-                    plugin_info['version'] = dist.version
-                    plugin_info['package'] = dist.name
+                if dist.name.replace("-", "_") == pkg_name.replace("-", "_"):
+                    plugin_info["version"] = dist.version
+                    plugin_info["package"] = dist.name
                     break
         except Exception:
             pass
@@ -148,14 +149,13 @@ def format_plugin_list(plugins: list[dict]) -> str:
     lines = ["Installed plugins:", ""]
 
     for plugin in plugins:
-        version = f" v{plugin.get('version', '?')}" if 'version' in plugin else ""
-        auth = " (requires auth)" if plugin['requires_auth'] else ""
+        version = f" v{plugin.get('version', '?')}" if "version" in plugin else ""
+        auth = " (requires auth)" if plugin["requires_auth"] else ""
 
         lines.append(f"  • {plugin['name']}{version}{auth}")
-        if plugin.get('description'):
+        if plugin.get("description"):
             lines.append(f"    {plugin['description']}")
         lines.append(f"    Module: {plugin['module']}")
         lines.append("")
-
 
     return "\n".join(lines)

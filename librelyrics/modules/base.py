@@ -3,6 +3,7 @@
 All librelyrics plugins must inherit from LyricsModule and implement the required
 interface. Plugins declare their capabilities via the META class attribute.
 """
+
 from __future__ import annotations
 
 import logging
@@ -12,17 +13,23 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum, Flag, auto
-from typing import Any, ClassVar, Literal
+from typing import Any, ClassVar, Literal, TypeVar
 
-from librelyrics.exceptions import LyricsNotFound, RateLimitError
+from librelyrics.exceptions import (
+    LyricsNotFound,
+    RateLimitError,
+    TransientProviderError,
+)
 from librelyrics.models import LyricsResponse, TrackQuery
 
-logger = logging.getLogger('librelyrics.modules.base')
+logger = logging.getLogger("librelyrics.modules.base")
+
+T = TypeVar("T")
 
 # Current API version - plugins must match this to be loaded
 LIBRELYRICS_API_VERSION = 2
 
-PLUGIN_ID_PATTERN = re.compile(r'^[a-z0-9]+$')
+PLUGIN_ID_PATTERN = re.compile(r"^[a-z0-9]+$")
 
 UrlResourceKind = Literal["track", "album", "playlist"]
 
@@ -35,6 +42,7 @@ class LyricsType(Enum):
         SYNCED: Line-synced lyrics (timestamp per line).
         RICH_SYNCED: Word-synced lyrics (timestamp per word, karaoke-style).
     """
+
     PLAIN = auto()
     SYNCED = auto()
     RICH_SYNCED = auto()
@@ -53,6 +61,7 @@ class ModuleCapability(Flag):
         SEARCH: Can search for a track by metadata.
         RESOLVE: Can fill artist, title, album, and duration from a URL.
     """
+
     SINGLE_TRACK = auto()
     ALBUM = auto()
     PLAYLIST = auto()
@@ -76,6 +85,7 @@ class ModuleMeta:
                        Used by the interactive config editor so the CLI
                        never needs to hardcode plugin-specific fields.
     """
+
     id: str
     name: str
     regex: re.Pattern[str] | None = None
@@ -92,8 +102,7 @@ class ModuleMeta:
     def __post_init__(self) -> None:
         if not PLUGIN_ID_PATTERN.fullmatch(self.id):
             raise ValueError(
-                f"Plugin id {self.id!r} must contain only lower-case letters "
-                "and digits"
+                f"Plugin id {self.id!r} must contain only lower-case letters and digits"
             )
 
 
@@ -144,6 +153,7 @@ class LyricsModule(ABC):
         ConnectionError,
         TimeoutError,
         RateLimitError,
+        TransientProviderError,
     )
 
     # --- Lifecycle hooks (class-level, per-subclass) ---
@@ -299,9 +309,7 @@ class LyricsModule(ABC):
         Returns:
             A new TrackQuery with metadata from the current URL.
         """
-        raise NotImplementedError(
-            f"{self.META.name} does not support resolve()."
-        )
+        raise NotImplementedError(f"{self.META.name} does not support resolve().")
 
     def list_tracks(self) -> list[TrackQuery]:
         """Return metadata for every track in the album or playlist.
@@ -312,9 +320,7 @@ class LyricsModule(ABC):
         Returns:
             Complete list of TrackQuery objects.
         """
-        raise NotImplementedError(
-            f"{self.META.name} does not support list_tracks()."
-        )
+        raise NotImplementedError(f"{self.META.name} does not support list_tracks().")
 
     # ------------------------------------------------------------------
     # Batch fetch (optional — declare capability to enable)
@@ -345,13 +351,16 @@ class LyricsModule(ABC):
             except LyricsNotFound:
                 logger.warning(
                     "No lyrics found for track: %s - %s",
-                    track.artist, track.title,
+                    track.artist,
+                    track.title,
                 )
             except Exception as exc:  # noqa: BLE001
                 last_error = exc
                 logger.error(
                     "Failed to fetch lyrics for track %s - %s: %s",
-                    track.artist, track.title, exc,
+                    track.artist,
+                    track.title,
+                    exc,
                 )
         # A batch where every track failed must not look like an empty success.
         if not results and last_error is not None:
@@ -364,36 +373,61 @@ class LyricsModule(ABC):
     def fetch_with_retry(self) -> LyricsResponse:
         """Call ``fetch()`` with automatic retry and exponential back-off.
 
-        Uses ``MAX_RETRIES``, ``RETRY_BACKOFF``, and
-        ``RETRYABLE_EXCEPTIONS`` class attributes for configuration.
-
         Returns:
             LyricsResponse on success.
 
         Raises:
             The last exception if all retries are exhausted.
         """
+        self._run_hooks(self._before_fetch_hooks)
+        try:
+            response = self.retry_call(self.fetch)
+        except Exception as exc:
+            self._run_hooks(self._after_fetch_hooks, error=exc)
+            raise
+        self._run_hooks(self._after_fetch_hooks, response=response)
+        return response
+
+    def retry_call(self, operation: Callable[[], T]) -> T:
+        """Run ``operation`` under this module's retry policy.
+
+        Batches route their per-track fetch through here so throttling is
+        retried like a single fetch, instead of every plugin reimplementing
+        back-off. Uses ``MAX_RETRIES``, ``RETRY_BACKOFF`` and
+        ``RETRYABLE_EXCEPTIONS``; a :class:`RateLimitError` carrying
+        ``retry_after`` is waited out for at least that long.
+
+        Args:
+            operation: Zero-argument callable to run.
+
+        Returns:
+            Whatever ``operation`` returns.
+
+        Raises:
+            Exception: The last failure once retries are exhausted.
+        """
         last_exc: Exception | None = None
         for attempt in range(1, self.MAX_RETRIES + 1):
             try:
-                self._run_hooks(self._before_fetch_hooks)
-                response = self.fetch()
-                self._run_hooks(self._after_fetch_hooks, response=response)
-                return response
+                return operation()
             except self.RETRYABLE_EXCEPTIONS as exc:
                 last_exc = exc
+                if attempt == self.MAX_RETRIES:
+                    break
                 wait = self.RETRY_BACKOFF * (2 ** (attempt - 1))
+                retry_after = getattr(exc, "retry_after", None)
+                if isinstance(retry_after, (int, float)) and retry_after > wait:
+                    wait = float(retry_after)
                 logger.warning(
                     "%s: attempt %d/%d failed (%s), retrying in %.1fs",
-                    self.META.name, attempt, self.MAX_RETRIES, exc, wait,
+                    self.META.name,
+                    attempt,
+                    self.MAX_RETRIES,
+                    exc,
+                    wait,
                 )
                 time.sleep(wait)
-            except Exception as exc:
-                self._run_hooks(self._after_fetch_hooks, error=exc)
-                raise
-        # All retries exhausted
         assert last_exc is not None
-        self._run_hooks(self._after_fetch_hooks, error=last_exc)
         raise last_exc
 
     # ------------------------------------------------------------------

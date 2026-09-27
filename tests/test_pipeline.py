@@ -95,7 +95,7 @@ def test_fallback_when_only_synced_available() -> None:
     assert not result.rich_synced
 
 
-def test_max_search_attempts_cap() -> None:
+def test_max_search_attempts_cap(caplog) -> None:
     calls: list[str] = []
 
     class CountBeta(SearchBeta):
@@ -108,16 +108,18 @@ def test_max_search_attempts_cap() -> None:
             calls.append("alpha")
             return super().fetch()
 
-    fetch_query(
-        TrackQuery(artist="A", title="T"),
-        [CountAlpha, CountBeta],
-        _cm(
-            search_priority=["beta", "alpha"],
-            preferred_lyrics_order=["RICH", "SYNCED"],
-            max_search_attempts=1,
-        ),
-    )
+    with caplog.at_level("WARNING", logger="librelyrics.pipeline"):
+        fetch_query(
+            TrackQuery(artist="A", title="T"),
+            [CountAlpha, CountBeta],
+            _cm(
+                search_priority=["beta", "alpha"],
+                preferred_lyrics_order=["RICH", "SYNCED"],
+                max_search_attempts=1,
+            ),
+        )
     assert calls == ["beta"]
+    assert "never tried: alpha" in caplog.text
 
 
 def test_direct_does_not_call_search_plugins() -> None:

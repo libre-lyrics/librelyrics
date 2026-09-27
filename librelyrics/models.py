@@ -1,4 +1,5 @@
 """Typed response models for librelyrics plugins."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -21,6 +22,7 @@ class TrackQuery:
 @dataclass(frozen=True)
 class LyricsWord:
     """A single word with timing for rich/karaoke lyrics."""
+
     word: str
     start_ms: int
     end_ms: int
@@ -29,6 +31,7 @@ class LyricsWord:
 @dataclass(frozen=True)
 class LyricsLine:
     """A single line of lyrics with optional timing."""
+
     text: str
     start_ms: int | None = None  # Timing in milliseconds, None for unsynced
     end_ms: int | None = None  # End timing for rich lyrics
@@ -41,6 +44,7 @@ class LyricsResponse:
 
     All plugins MUST return this object from their fetch() method.
     """
+
     title: str
     artist: str
     lyrics: list[LyricsLine]
@@ -61,35 +65,34 @@ class LyricsResponse:
         lines = []
 
         if include_metadata:
-            lines.append(f'[ti:{_escape_lrc_tag(self.title)}]')
+            lines.append(f"[ti:{_escape_lrc_tag(self.title)}]")
             if self.album:
-                lines.append(f'[al:{_escape_lrc_tag(self.album)}]')
-            lines.append(f'[ar:{_escape_lrc_tag(self.artist)}]')
+                lines.append(f"[al:{_escape_lrc_tag(self.album)}]")
+            lines.append(f"[ar:{_escape_lrc_tag(self.artist)}]")
             if self.duration_ms is not None and self.duration_ms > 0:
                 minutes, seconds = divmod(self.duration_ms / 1000, 60)
-                lines.append(f'[length:{minutes:0>2.0f}:{seconds:05.2f}]')
+                lines.append(f"[length:{minutes:0>2.0f}:{seconds:05.2f}]")
 
         for line in self.lyrics:
             if self.synced and line.start_ms is not None:
                 minutes, seconds = divmod(line.start_ms / 1000, 60)
-                timestamp = f'[{minutes:0>2.0f}:{seconds:05.2f}]'
+                timestamp = f"[{minutes:0>2.0f}:{seconds:05.2f}]"
 
                 # Enhanced LRC with word-level timing
                 if enhanced and self.rich_synced and line.words:
                     word_parts = []
                     for word in line.words:
                         w_min, w_sec = divmod(word.start_ms / 1000, 60)
-                        word_parts.append(f'<{w_min:0>2.0f}:{w_sec:05.2f}>{word.word}')
-                    lines.append(f'{timestamp} {" ".join(word_parts)}')
+                        word_parts.append(f"<{w_min:0>2.0f}:{w_sec:05.2f}>{word.word}")
+                    lines.append(f"{timestamp} {' '.join(word_parts)}")
                 else:
-                    lines.append(f'{timestamp} {line.text}')
+                    lines.append(f"{timestamp} {line.text}")
             else:
                 lines.append(line.text)
 
-        return '\n'.join(lines)
+        return "\n".join(lines)
 
 
 def _escape_lrc_tag(value: str) -> str:
-    """Keep LRC metadata tags parseable as a single ``[id:value]`` field.
-    """
+    """Keep LRC metadata tags parseable as a single ``[id:value]`` field."""
     return value.replace("[", "(").replace("]", ")")
